@@ -52,7 +52,7 @@ bool LogFileReader::next(int64_t* timestamp, std::vector<LogSample>* data,
     int next = is_.peek_uint8();
     if (is_.eof()) {
       if (is_hot) {
-        // Incidate that the data isn't complete yet. Not updating the
+        // Indicate that the data isn't complete yet. Not updating the
         // source checkpoint in this case.
         return false;
       } else {
