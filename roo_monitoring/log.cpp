@@ -1,10 +1,11 @@
+#include "glog/logging.h"
+
 #include "log.h"
 
 #include <algorithm>
 
 #include "common.h"
 #include "datastream.h"
-#include "glog/logging.h"
 
 #include <Arduino.h>
 

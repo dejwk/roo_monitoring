@@ -1,10 +1,10 @@
+#include "glog/logging.h"
+
 #include "roo_monitoring.h"
 #include "common.h"
 #include "compaction.h"
 #include "datastream.h"
 #include "log.h"
-
-#include "glog/logging.h"
 
 #include <map>
 

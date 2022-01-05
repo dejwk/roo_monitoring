@@ -1,7 +1,8 @@
+#include "glog/logging.h"
+
 #include "compaction.h"
 #include "common.h"
 #include "datastream.h"
-#include "glog/logging.h"
 
 namespace roo_monitoring {
 

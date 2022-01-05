@@ -1,3 +1,5 @@
+#include "glog/logging.h"
+
 #include "common.h"
 
 #include <dirent.h>
@@ -5,8 +7,6 @@
 #include <sys/stat.h>
 #include <algorithm>
 #include <memory>
-
-#include "glog/logging.h"
 
 namespace roo_monitoring {
 
