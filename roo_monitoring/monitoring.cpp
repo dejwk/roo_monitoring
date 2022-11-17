@@ -1,12 +1,16 @@
-#include "glog/logging.h"
 
-#include "roo_monitoring.h"
+#include <map>
+
 #include "common.h"
 #include "compaction.h"
 #include "datastream.h"
 #include "log.h"
+#include "roo_glog/logging.h"
+#include "roo_monitoring.h"
 
-#include <map>
+#ifdef ROO_TESTING
+const char* GetVfsRoot();
+#endif
 
 namespace roo_monitoring {
 
@@ -35,7 +39,11 @@ float Transform::unapply(uint16_t value) const {
 
 Collection::Collection(String name)
     : name_(name), transform_(Transform::Linear(256, 0x8000)) {
-  base_dir_ = kMonitoringBasePath;
+  base_dir_ = "";
+#ifdef ROO_TESTING
+  base_dir_ += GetVfsRoot();
+#endif
+  base_dir_ += kMonitoringBasePath;
   base_dir_ += "/";
   base_dir_ += name;
 }
@@ -107,7 +115,7 @@ bool tryReadLogCompactionCursor(const char* cursor_path,
   uint64_t source_checkpoint = cursor_file.read_varint();
   if (!cursor_file.good()) {
     LOG(ERROR) << "Error reading data from the cursor file: "
-               << strerror(errno);
+               << cursor_file.status() << ". Will ignore the cursor.";
     return false;
   }
   *result = LogCompactionCursor(LogCursor(source_file, source_checkpoint),
@@ -141,6 +149,35 @@ bool writeCursor(const char* cursor_path, const LogCompactionCursor cursor) {
 
 }  // namespace
 
+// Vault files form a hierarchy. Four vault files from a lower level cover the
+// same time span as a single vault file of a higher level, but with 4x time
+// resolution.
+//
+// Vault files are progressively compacted. Naively, when 4 lower-level vault
+// files are finished, they can be compacted to a single new higher-level vault
+// file.
+
+// In order to support more incremental compaction, we use a notion of 'hot'
+// vault files, which are only partially filled. Every time 4 new entries are
+// added to the lower-level 'hot' vault file, these new entries can be compacted
+// into one new entry in the higher level 'hot' vault file. In order to support
+// that, hot files are accompanied by 'compaction cursor' files. A compaction
+// cursor file has the following format:
+//
+// * target datum index (uint8): the current count of entries in the
+//   higher-level vault file. Always within [0 - 255].
+// * source file (varint): the start_timestamp (thus filename) of the
+//   lower-level hot file that is being compacted.
+// * source checkpoint (varint): byte offset in the lower level file up
+//   to which the data has already been compacted.
+//
+// The compaction algorithm tries to pick up where it left off, by looking for
+// the cursor file and seeking in both the source and the destination files. If
+// the cursor file is missing or malformed, the compaction is simply done from
+// scratch (i.e. the destination file is rebuild rather than appended to). After
+// the compaction, if the destination file is still hot (i.e. has less than 256
+// entries), a new cursor file is created to be used for the next compaction
+// run.
 bool Writer::Compact() {
   LogReader reader(log_dir_.c_str(), writer_.first_timestamp());
   while (reader.nextRange()) {
@@ -234,9 +271,8 @@ bool Writer::CompactVaultOneLevel(VaultFileRef ref, int16_t index_begin,
                                   int16_t index_end, bool hot) {
   VaultWriter writer(collection_, ref);
   VaultFileReader reader(collection_);
-  LOG(INFO) << "Compacting " << std::hex
-            << writer.vault_ref() << ", with end index " << std::dec
-            << index_end;
+  LOG(INFO) << "Compacting " << std::hex << writer.vault_ref()
+            << ", with end index " << std::dec << index_end;
 
   // See if we can use a cursor file.
   String cursor_path = getLogCompactionCursorPath(collection_, ref);
@@ -279,18 +315,16 @@ bool Writer::CompactVaultOneLevel(VaultFileRef ref, int16_t index_begin,
   reader.close();
   writer.close();
   if (!reader.good()) {
-    LOG(ERROR) << "Failed to process the input vault file: "
-               << strerror(reader.my_errno());
+    LOG(ERROR) << "Failed to process the input vault file: " << reader.status();
     return false;
   }
   if (!writer.good()) {
     LOG(ERROR) << "Failed to process the output vault file: "
-               << strerror(writer.my_errno());
+               << writer.status();
     return false;
   }
-  LOG(INFO) << "Finished compacting " << std::hex
-            << writer.vault_ref() << ", with end index " << std::dec
-            << writer.write_index();
+  LOG(INFO) << "Finished compacting " << std::hex << writer.vault_ref()
+            << ", with end index " << std::dec << writer.write_index();
   return true;
 }
 
@@ -343,7 +377,7 @@ bool read_data(DataInputStream& is, std::vector<Sample>* data,
   if (!is.good()) {
     if (!is.eof()) {
       LOG(ERROR) << "Failed to read data from the vault file: "
-                << strerror(is.my_errno());
+                 << strerror(is.my_errno());
     }
     return false;
   }
@@ -411,7 +445,7 @@ bool VaultFileReader::open(const VaultFileRef& vault_ref, int index,
   }
   LOG(INFO) << "Vault file " << path.c_str() << " opened for read at index "
             << index_ << " and position " << offset;
-  return true;
+  return file_.good();
 }
 
 VaultFileReader::~VaultFileReader() { file_.close(); }

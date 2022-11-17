@@ -1,6 +1,7 @@
 #pragma once
 
 #include <Arduino.h>
+
 #include <fstream>
 #include <set>
 
@@ -184,6 +185,24 @@ class Sample {
 };
 
 // An 'iterator' class that allows to scan a single vault file sequentially.
+//
+// A single vault file has the following format:
+//
+// header:
+//   major version (uint8): currently always 1
+//   minor version (uint8): currently always 1
+// entry[]:
+//   sample count (varint)
+//   sample[]:
+//     stream ID (varint)
+//     avg       (uint16)
+//     min       (uint16)
+//     max       (uint16)
+//     fill      (uint16)
+//
+// The file name of the vault file implies the 'start timestamp'.
+// The 'level' of the vault implies the time resolution.
+// The finished vault always has 256 entries.
 class VaultFileReader {
  public:
   VaultFileReader(const Collection* collection);
@@ -211,6 +230,8 @@ class VaultFileReader {
     int result = file_.my_errno();
     return (result == ENOENT ? 0 : result);
   }
+
+  const char* status() { return strerror(my_errno()); }
 
   const VaultFileRef& vault_ref() const { return ref_; }
 

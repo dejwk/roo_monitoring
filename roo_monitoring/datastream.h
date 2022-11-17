@@ -1,28 +1,21 @@
 #pragma once
 
 #include <fstream>
+#include <cstring>
 #include "stdint.h"
 
 namespace roo_monitoring {
 
 class DataInputStream {
  public:
-  DataInputStream() : is_(), error_(0) {}
+  DataInputStream() : is_(), error_(0), read_error_(0) {}
   DataInputStream(const char* filename,
                   std::ios_base::openmode mode = std::ios_base::in) {
     open(filename, mode);
   }
 
-  void seekg(std::streampos pos) {
-    is_.seekg(pos);
-    update_status();
-  }
-
-  std::streampos tellg() {
-    std::streampos result = is_.tellg();
-    update_status();
-    return result;
-  }
+  void seekg(std::streampos pos);
+  std::streampos tellg();
 
   bool good() const { return is_.good(); }
   bool eof() const { return is_.eof(); }
@@ -32,12 +25,17 @@ class DataInputStream {
 
   void open(const char* filename,
             std::ios_base::openmode mode = std::ios_base::in) {
+    error_ = 0;
     is_.open(filename, mode);
-    error_ = errno;
+    if (!is_.good()) {
+      error_ = errno;
+    }
   }
 
   bool is_open() const { return is_.is_open(); }
+
   void close() { is_.close(); }
+
   void clear_error() {
     is_.clear();
     error_ = 0;
@@ -49,13 +47,21 @@ class DataInputStream {
 
   uint8_t peek_uint8();
 
+  const char* status() {
+    if (error_ != 0) return strerror(error_);
+    if (good()) return "OK";
+    if (eof()) return "EOF";
+    return "Unknown, not good";
+  }
+
  private:
   inline void update_status(bool force = false) {
-    if (force || error_ == 0) error_ = errno;
+    if (!is_.good() && (force || error_ == 0)) error_ = errno;
   }
 
   std::ifstream is_;
   int error_;
+  int read_error_;
 };
 
 class DataOutputStream {
@@ -88,6 +94,12 @@ class DataOutputStream {
   void close() { os_.close(); }
 
   int my_errno() const { return error_; }
+
+  const char* status() {
+    if (good()) return "OK";
+    if (eof()) return "EOF";
+    return strerror(error_);
+  }
 
  private:
   inline void update_status(bool force = false) {

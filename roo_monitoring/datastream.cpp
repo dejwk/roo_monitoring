@@ -2,16 +2,31 @@
 
 namespace roo_monitoring {
 
-uint8_t DataInputStream::read_uint8() {
-  uint8_t result = is_.get();
+void DataInputStream::seekg(std::streampos pos) {
+  is_.seekg(pos);
+  update_status();
+}
+
+std::streampos DataInputStream::tellg() {
+  std::streampos result = is_.tellg();
   update_status();
   return result;
 }
 
+uint8_t DataInputStream::read_uint8() {
+  int result = is_.get();
+  if (result < 0) {
+    update_status();
+  }
+  return (uint8_t)result;
+}
+
 uint8_t DataInputStream::peek_uint8() {
   uint8_t result = is_.peek();
-  update_status();
-  return result;
+  if (result < 0) {
+    update_status();
+  }
+  return (uint8_t)result;
 }
 
 uint16_t DataInputStream::read_uint16() {

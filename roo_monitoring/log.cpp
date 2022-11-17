@@ -1,13 +1,12 @@
-#include "glog/logging.h"
-
 #include "log.h"
+
+#include <Arduino.h>
 
 #include <algorithm>
 
 #include "common.h"
 #include "datastream.h"
-
-#include <Arduino.h>
+#include "roo_glog/logging.h"
 
 namespace roo_monitoring {
 
@@ -26,7 +25,7 @@ bool LogFileReader::open(const char* path, int64_t checkpoint) {
     is_.seekg(checkpoint);
     if (!is_.good()) {
       LOG(ERROR) << "Failed to seek in the log file " << path << ": "
-                << strerror(is_.my_errno());
+                 << strerror(is_.my_errno());
       return false;
     }
   }
@@ -90,12 +89,18 @@ LogReader::LogReader(const char* log_dir, int64_t hot_file)
       group_begin_(entries_.begin()),
       cursor_(entries_.begin()),
       group_end_(entries_.begin()),
-      hot_file_(hot_file >= 0 ? hot_file
-                              : entries_.empty() ? 0 : entries_.back()),
+      hot_file_(hot_file >= 0      ? hot_file
+                : entries_.empty() ? 0
+                                   : entries_.back()),
       reached_hot_file_(false),
       range_floor_(0),
       range_ceil_(0),
-      reader_() {}
+      reader_() {
+  // Ensure that the hot file is at the end of the list, even if it is not, for
+  // some reason, chronologically the newest. This way, we will always delete
+  // the non-hot logs and leave the hot file be.
+
+}
 
 bool LogReader::nextRange() {
   if (group_end_ == entries_.end() || reached_hot_file_) {
@@ -103,7 +108,6 @@ bool LogReader::nextRange() {
     return false;
   }
   cursor_ = group_begin_ = group_end_;
-  group_end_ = cursor_ + 1;
   int ms_per_range_exp = kTargetResolution + kRangeLength;
   range_floor_ = timestamp_ms_floor(*cursor_, ms_per_range_exp);
   range_ceil_ = timestamp_ms_ceil(*cursor_, ms_per_range_exp);

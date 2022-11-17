@@ -54,6 +54,8 @@ class VaultWriter {
   bool good() const { return os_.good(); }
   int my_errno() const { return os_.my_errno(); }
 
+  const char* status() { return os_.status(); }
+
  private:
   void writeHeader();
 
