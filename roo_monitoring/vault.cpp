@@ -7,6 +7,8 @@
 #include "common.h"
 #include "datastream.h"
 #include "log.h"
+#include "resolution.h"
+
 #include "roo_glog/logging.h"
 
 namespace roo_monitoring {
@@ -136,7 +138,8 @@ bool VaultFileReader::next(std::vector<Sample>* sample) {
     ++index_;
     return false;
   }
-  bool ignore_fill = (ref_.resolution() <= kInterpolationResolution);
+  // TODO: make this configurable.
+  bool ignore_fill = (ref_.resolution() <= kResolution_65536_ms);
   if (read_data(file_, sample, ignore_fill)) {
     ++index_;
     if (past_eof()) {

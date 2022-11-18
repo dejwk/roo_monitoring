@@ -83,7 +83,8 @@ bool LogFileReader::next(int64_t* timestamp, std::vector<LogSample>* data,
   return true;
 }
 
-LogReader::LogReader(const char* log_dir, int resolution, int64_t hot_file)
+LogReader::LogReader(const char* log_dir, Resolution resolution,
+                     int64_t hot_file)
     : log_dir_(log_dir),
       resolution_(resolution),
       entries_(listFiles(log_dir)),
@@ -108,9 +109,9 @@ bool LogReader::nextRange() {
     return false;
   }
   cursor_ = group_begin_ = group_end_;
-  int ms_per_range_exp = resolution_ + kRangeLength;
-  range_floor_ = timestamp_ms_floor(*cursor_, ms_per_range_exp);
-  range_ceil_ = timestamp_ms_ceil(*cursor_, ms_per_range_exp);
+  Resolution range_resolution = Resolution(resolution_ + kRangeLength);
+  range_floor_ = timestamp_ms_floor(*cursor_, range_resolution);
+  range_ceil_ = timestamp_ms_ceil(*cursor_, range_resolution);
   while (!reached_hot_file_ && group_end_ != entries_.end() &&
          *group_end_ <= range_ceil_) {
     if (*group_end_ == hot_file_) {
@@ -174,7 +175,7 @@ void LogReader::deleteRange() {
   }
 }
 
-LogWriter::LogWriter(const char* log_dir, int resolution)
+LogWriter::LogWriter(const char* log_dir, Resolution resolution)
     : log_dir_(log_dir),
       resolution_(resolution),
       first_timestamp_(-1),
@@ -220,9 +221,9 @@ void LogWriter::write(int64_t timestamp, uint64_t stream_id, uint16_t datum) {
     // Log file either not yet created after start, or the timestamp
     // falls outside its range.
     close();
-    int ms_per_range_exp = resolution_ + kRangeLength;
+    Resolution range_resolution = Resolution(resolution_ + kRangeLength);
     first_timestamp_ = timestamp;
-    range_ceil_ = timestamp_ms_ceil(timestamp, ms_per_range_exp);
+    range_ceil_ = timestamp_ms_ceil(timestamp, range_resolution);
     streams_.clear();
     open(std::ios_base::out);
   } else {

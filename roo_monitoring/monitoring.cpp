@@ -14,7 +14,7 @@ const char* GetVfsRoot();
 
 namespace roo_monitoring {
 
-Collection::Collection(String name, int resolution)
+Collection::Collection(String name, Resolution resolution)
     : name_(name),
       resolution_(resolution),
       transform_(Transform::Linear(256, 0x8000)) {
@@ -40,8 +40,7 @@ WriteTransaction::~WriteTransaction() { writer_->close(); }
 
 void WriteTransaction::write(int64_t timestamp_ms, uint64_t stream_id,
                              float datum) {
-  int64_t ts_rounded =
-      timestamp_ms_floor(timestamp_ms, writer_->resolution());
+  int64_t ts_rounded = timestamp_ms_floor(timestamp_ms, writer_->resolution());
   if (writer_->can_skip_write(ts_rounded, stream_id)) {
     // Fast path: already written data for this bucket.
     return;
@@ -159,7 +158,8 @@ bool writeCursor(const char* cursor_path, const LogCompactionCursor cursor) {
 // entries), a new cursor file is created to be used for the next compaction
 // run.
 bool Writer::Compact() {
-  LogReader reader(log_dir_.c_str(), writer_.first_timestamp());
+  LogReader reader(log_dir_.c_str(), collection_->resolution(),
+                   writer_.first_timestamp());
   while (reader.nextRange()) {
     VaultWriter writer(
         collection_,
@@ -309,9 +309,9 @@ bool Writer::CompactVaultOneLevel(VaultFileRef ref, int16_t index_begin,
   return true;
 }
 
-VaultFileRef VaultFileRef::Lookup(int64_t timestamp, int resolution) {
-  int ms_per_range_exp = resolution + kRangeLength;
-  int64_t range_floor = timestamp_ms_floor(timestamp, ms_per_range_exp);
+VaultFileRef VaultFileRef::Lookup(int64_t timestamp, Resolution resolution) {
+  Resolution range_resolution = Resolution(resolution + kRangeLength);
+  int64_t range_floor = timestamp_ms_floor(timestamp, range_resolution);
   return VaultFileRef(range_floor, resolution);
 }
 
@@ -319,10 +319,11 @@ void Collection::getVaultFilePath(const VaultFileRef& ref, String* path) const {
   // Introduce a 2nd level directory structure with max 256 (4^4) files.
   // Each file covers 256 (4 ^ range length) time steps, and each time step
   // covers 4^resolution milliseconds.
-  int ms_per_group_range_exp = ref.resolution() + kRangeLength + 4;
+  Resolution group_range_resolution =
+      Resolution(ref.resolution() + kRangeLength + 4);
   Filename filename = Filename::forTimestamp(ref.timestamp());
   Filename dirname = Filename::forTimestamp(
-      timestamp_ms_floor(ref.timestamp(), ms_per_group_range_exp));
+      timestamp_ms_floor(ref.timestamp(), group_range_resolution));
   *path = base_dir_;
   *path += "/";
   *path += "vault-";
@@ -335,7 +336,7 @@ void Collection::getVaultFilePath(const VaultFileRef& ref, String* path) const {
 }
 
 VaultIterator::VaultIterator(const Collection* collection, int64_t start,
-                             int resolution)
+                             Resolution resolution)
     : collection_(collection),
       current_ref_(VaultFileRef::Lookup(start, resolution)),
       current_(collection) {

@@ -3,9 +3,9 @@
 #include <ostream>
 
 #include "common.h"
+#include "datastream.h"
 #include "log.h"  // for LogCursor.
 #include "sample.h"
-#include "datastream.h"
 
 namespace roo_monitoring {
 
@@ -16,9 +16,9 @@ class VaultFileRef {
  public:
   // Creates a reference for a vault file that encloses the specified timestamp,
   // and has the specified resolution.
-  static VaultFileRef Lookup(int64_t timestamp, int resolution);
+  static VaultFileRef Lookup(int64_t timestamp, Resolution resolution);
 
-  VaultFileRef() : timestamp_(0), resolution_(0) {}
+  VaultFileRef() : timestamp_(0), resolution_(kResolution_1024_ms) {}
   VaultFileRef(const VaultFileRef& other) = default;
   VaultFileRef& operator=(const VaultFileRef& other) = default;
 
@@ -26,7 +26,7 @@ class VaultFileRef {
   int64_t timestamp_at(int position) const {
     return timestamp_ + time_steps(position);
   }
-  int resolution() const { return resolution_; }
+  Resolution resolution() const { return resolution_; }
 
   int64_t time_step() const { return 1LL << (resolution_ << 1); }
   int64_t time_steps(int count) const {
@@ -36,10 +36,12 @@ class VaultFileRef {
     return 1LL << ((resolution_ + kRangeLength) << 1);
   }
 
-  VaultFileRef parent() const { return Lookup(timestamp_, resolution_ + 1); }
+  VaultFileRef parent() const {
+    return Lookup(timestamp_, Resolution(resolution_ + 1));
+  }
 
   VaultFileRef child(int index) const {
-    return VaultFileRef(timestamp_, resolution_ - 1).advance(index);
+    return VaultFileRef(timestamp_, Resolution(resolution_ - 1)).advance(index);
   }
 
   VaultFileRef prev() const {
@@ -59,11 +61,11 @@ class VaultFileRef {
   }
 
  private:
-  VaultFileRef(int64_t timestamp, int resolution)
+  VaultFileRef(int64_t timestamp, Resolution resolution)
       : timestamp_(timestamp), resolution_(resolution) {}
 
   int64_t timestamp_;
-  int resolution_;
+  Resolution resolution_;
 };
 
 std::ostream& operator<<(std::ostream& os, const VaultFileRef& file_ref);
@@ -131,4 +133,4 @@ class VaultFileReader {
   int position_;
 };
 
-}
+}  // namespace roo_monitoring

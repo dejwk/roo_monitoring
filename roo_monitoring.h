@@ -7,6 +7,7 @@
 
 #include "roo_monitoring/common.h"
 #include "roo_monitoring/log.h"
+#include "roo_monitoring/resolution.h"
 #include "roo_monitoring/sample.h"
 #include "roo_monitoring/transform.h"
 #include "roo_monitoring/vault.h"
@@ -18,10 +19,10 @@ namespace roo_monitoring {
 // timeseries that will usually be plotted together.
 class Collection {
  public:
-  Collection(String name, int resolution = 5);
+  Collection(String name, Resolution resolution = kResolution_1024_ms);
 
   const String& name() const { return name_; }
-  int resolution() const { return resolution_; }
+  Resolution resolution() const { return resolution_; }
   const Transform& transform() const { return transform_; }
 
   void getVaultFilePath(const VaultFileRef& ref, String* path) const;
@@ -32,7 +33,7 @@ class Collection {
 
   String name_;
   String base_dir_;
-  int resolution_;
+  Resolution resolution_;
   Transform transform_;
 };
 
@@ -86,7 +87,8 @@ class VaultIterator {
   // Creates the iterator over a specified collection, at the specified
   // resolution, starting at the specified timestamp (rounded down to align with
   // the resolution).
-  VaultIterator(const Collection* collection, int64_t start, int resolution);
+  VaultIterator(const Collection* collection, int64_t start,
+                Resolution resolution);
 
   // Returns the current timestamp that the iterator is pointed at.
   int64_t cursor() const;
