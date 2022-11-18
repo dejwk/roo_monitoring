@@ -8,7 +8,6 @@
 namespace roo_monitoring {
 
 static const int kRangeLength = 4;       // 4^4 = 256 items per range.
-static const int kTargetResolution = 5;  // 4^5 = 1024ms ~= 1s
 static const int kMaxResolution = 18;  // 4^18 ~= 2 years
 static const int kRangeElementCount = 1 << (kRangeLength << 1);
 

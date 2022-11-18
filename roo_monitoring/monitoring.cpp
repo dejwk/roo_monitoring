@@ -14,8 +14,10 @@ const char* GetVfsRoot();
 
 namespace roo_monitoring {
 
-Collection::Collection(String name)
-    : name_(name), transform_(Transform::Linear(256, 0x8000)) {
+Collection::Collection(String name, int resolution)
+    : name_(name),
+      resolution_(resolution),
+      transform_(Transform::Linear(256, 0x8000)) {
   base_dir_ = "";
 #ifdef ROO_TESTING
   base_dir_ += GetVfsRoot();
@@ -28,7 +30,7 @@ Collection::Collection(String name)
 Writer::Writer(Collection* collection)
     : collection_(collection),
       log_dir_(subdir(collection->base_dir_, kLogSubPath)),
-      writer_(log_dir_.c_str()) {}
+      writer_(log_dir_.c_str(), collection->resolution()) {}
 
 WriteTransaction::WriteTransaction(Writer* writer)
     : transform_(&writer->collection_->transform()),
@@ -38,7 +40,8 @@ WriteTransaction::~WriteTransaction() { writer_->close(); }
 
 void WriteTransaction::write(int64_t timestamp_ms, uint64_t stream_id,
                              float datum) {
-  int64_t ts_rounded = timestamp_ms_floor(timestamp_ms, kTargetResolution);
+  int64_t ts_rounded =
+      timestamp_ms_floor(timestamp_ms, writer_->resolution());
   if (writer_->can_skip_write(ts_rounded, stream_id)) {
     // Fast path: already written data for this bucket.
     return;
@@ -158,8 +161,9 @@ bool writeCursor(const char* cursor_path, const LogCompactionCursor cursor) {
 bool Writer::Compact() {
   LogReader reader(log_dir_.c_str(), writer_.first_timestamp());
   while (reader.nextRange()) {
-    VaultWriter writer(collection_, VaultFileRef::Lookup(reader.range_floor(),
-                                                         kTargetResolution));
+    VaultWriter writer(
+        collection_,
+        VaultFileRef::Lookup(reader.range_floor(), collection_->resolution()));
 
     // See if we can use cursor.
     String cursor_path =
@@ -177,10 +181,10 @@ bool Writer::Compact() {
     remove(cursor_path.c_str());
 
     // In any case, now just iterate and compact.
-    int64_t increment = timestamp_increment(1, kTargetResolution);
+    int64_t increment = timestamp_increment(1, collection_->resolution());
     int64_t current =
         writer.vault_ref().timestamp() +
-        timestamp_increment(writer.write_index(), kTargetResolution);
+        timestamp_increment(writer.write_index(), collection_->resolution());
     int16_t compaction_index_begin = writer.write_index();
     int64_t timestamp;
     std::vector<LogSample> data;

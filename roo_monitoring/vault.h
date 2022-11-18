@@ -18,7 +18,7 @@ class VaultFileRef {
   // and has the specified resolution.
   static VaultFileRef Lookup(int64_t timestamp, int resolution);
 
-  VaultFileRef() : timestamp_(0), resolution_(kTargetResolution) {}
+  VaultFileRef() : timestamp_(0), resolution_(0) {}
   VaultFileRef(const VaultFileRef& other) = default;
   VaultFileRef& operator=(const VaultFileRef& other) = default;
 

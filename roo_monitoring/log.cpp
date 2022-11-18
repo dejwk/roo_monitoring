@@ -83,8 +83,9 @@ bool LogFileReader::next(int64_t* timestamp, std::vector<LogSample>* data,
   return true;
 }
 
-LogReader::LogReader(const char* log_dir, int64_t hot_file)
+LogReader::LogReader(const char* log_dir, int resolution, int64_t hot_file)
     : log_dir_(log_dir),
+      resolution_(resolution),
       entries_(listFiles(log_dir)),
       group_begin_(entries_.begin()),
       cursor_(entries_.begin()),
@@ -99,7 +100,6 @@ LogReader::LogReader(const char* log_dir, int64_t hot_file)
   // Ensure that the hot file is at the end of the list, even if it is not, for
   // some reason, chronologically the newest. This way, we will always delete
   // the non-hot logs and leave the hot file be.
-
 }
 
 bool LogReader::nextRange() {
@@ -108,7 +108,7 @@ bool LogReader::nextRange() {
     return false;
   }
   cursor_ = group_begin_ = group_end_;
-  int ms_per_range_exp = kTargetResolution + kRangeLength;
+  int ms_per_range_exp = resolution_ + kRangeLength;
   range_floor_ = timestamp_ms_floor(*cursor_, ms_per_range_exp);
   range_ceil_ = timestamp_ms_ceil(*cursor_, ms_per_range_exp);
   while (!reached_hot_file_ && group_end_ != entries_.end() &&
@@ -174,8 +174,9 @@ void LogReader::deleteRange() {
   }
 }
 
-LogWriter::LogWriter(const char* log_dir)
+LogWriter::LogWriter(const char* log_dir, int resolution)
     : log_dir_(log_dir),
+      resolution_(resolution),
       first_timestamp_(-1),
       last_timestamp_(-1),
       range_ceil_(-1) {}
@@ -219,7 +220,7 @@ void LogWriter::write(int64_t timestamp, uint64_t stream_id, uint16_t datum) {
     // Log file either not yet created after start, or the timestamp
     // falls outside its range.
     close();
-    int ms_per_range_exp = kTargetResolution + kRangeLength;
+    int ms_per_range_exp = resolution_ + kRangeLength;
     first_timestamp_ = timestamp;
     range_ceil_ = timestamp_ms_ceil(timestamp, ms_per_range_exp);
     streams_.clear();

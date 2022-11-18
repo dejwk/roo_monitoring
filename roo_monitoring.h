@@ -13,13 +13,15 @@
 
 namespace roo_monitoring {
 
-// Represents a colletion of timeseries, using the same data mapping
-// transformation. Should be used to group together timeseries that will usually
-// be plotted together.
+// Represents a collection of timeseries, using the same data mapping
+// transformation and source resolution. Should be used to group together
+// timeseries that will usually be plotted together.
 class Collection {
  public:
-  Collection(String name);
+  Collection(String name, int resolution = 5);
+
   const String& name() const { return name_; }
+  int resolution() const { return resolution_; }
   const Transform& transform() const { return transform_; }
 
   void getVaultFilePath(const VaultFileRef& ref, String* path) const;
@@ -30,6 +32,7 @@ class Collection {
 
   String name_;
   String base_dir_;
+  int resolution_;
   Transform transform_;
 };
 

@@ -57,7 +57,7 @@ class LogCursor {
 
 class LogReader {
  public:
-  LogReader(const char* log_dir, int64_t hot_file = -1);
+  LogReader(const char* log_dir, int resolution, int64_t hot_file = -1);
 
   bool nextRange();
   int64_t range_floor() const { return range_floor_; }
@@ -73,6 +73,7 @@ class LogReader {
   bool open(int64_t file, uint64_t position);
 
   const char* log_dir_;
+  int resolution_;
   std::vector<int64_t> entries_;
   std::vector<int64_t>::const_iterator group_begin_;
   std::vector<int64_t>::const_iterator cursor_;
@@ -86,7 +87,9 @@ class LogReader {
 
 class LogWriter {
  public:
-  LogWriter(const char* log_dir);
+  LogWriter(const char* log_dir, int resolution);
+
+  int resolution() const { return resolution_; }
 
   void open(std::ios_base::openmode mode);
   void close();
@@ -99,6 +102,7 @@ class LogWriter {
  private:
   // const that contains the path where log files are stored.
   const char* log_dir_;
+  int resolution_;
 
   DataOutputStream os_;
 
