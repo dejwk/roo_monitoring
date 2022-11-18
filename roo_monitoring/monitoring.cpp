@@ -392,7 +392,7 @@ bool read_data(DataInputStream& is, std::vector<Sample>* data,
     }
     if (!is.good()) {
       LOG(ERROR) << "Failed to read a sample from the vault file: "
-                 << strerror(is.my_errno());
+                 << is.status();
       return false;
     }
     data->emplace_back(stream_id, avg, min, max, fill);
