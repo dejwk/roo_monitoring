@@ -153,8 +153,6 @@ class WriteTransaction {
   void write(int64_t timestamp, uint64_t stream_id, float data);
 
  private:
-  // void open(std::ios_base::openmode mode);
-  // void close();
   const Transform* transform_;
   LogWriter* writer_;
 };
@@ -247,16 +245,25 @@ class VaultFileReader {
   int position_;
 };
 
-// An 'iterator' class that allows to scan data from subsequent vault files,
-// starting and ending at arbitrary timestamps. If the necessary vault files
-// do not exist (e.g. because the scan goes into the future), empty samples
-// are returned.
+// An 'iterator' class that allows to scan the collected monitoring data
+// at a specified resolution, starting at a specified timestamp.
+//
+// The implementation reads data from subsequent vault files. If the necessary
+// vault files do not exist (e.g. because the scan goes into the future), empty
+// samples are returned.
 class VaultIterator {
  public:
+  // Creates the iterator over a specified collection, at the specified
+  // resolution, starting at the specified timestamp (rounded down to align with
+  // the resolution).
   VaultIterator(const Collection* collection, int64_t start, int resolution);
+
+  // Returns the current timestamp that the iterator is pointed at.
   int64_t cursor() const;
+
+  // Advances the iterator by the time step implied by the resolution, filling
+  // up the specified sample.
   void next(std::vector<Sample>* sample);
-  const VaultFileRef& vault_ref() const { return current_ref_; }
 
  private:
   const Collection* collection_;
