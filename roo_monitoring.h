@@ -47,7 +47,9 @@ class Writer {
   Writer(Collection* collection);
   const Collection& collection() const { return *collection_; }
 
-  bool Compact();
+  // Needs to be called periodically in order to actually incorporate the logged
+  // data into the vault.
+  bool Flush();
 
  private:
   bool CompactVault(VaultFileRef ref, int16_t index_begin, int16_t index_end,

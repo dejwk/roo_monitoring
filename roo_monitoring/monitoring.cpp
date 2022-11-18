@@ -157,7 +157,7 @@ bool writeCursor(const char* cursor_path, const LogCompactionCursor cursor) {
 // the compaction, if the destination file is still hot (i.e. has less than 256
 // entries), a new cursor file is created to be used for the next compaction
 // run.
-bool Writer::Compact() {
+bool Writer::Flush() {
   LogReader reader(log_dir_.c_str(), collection_->resolution(),
                    writer_.first_timestamp());
   while (reader.nextRange()) {
