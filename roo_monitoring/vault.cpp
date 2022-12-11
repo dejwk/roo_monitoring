@@ -153,11 +153,12 @@ bool VaultFileReader::next(std::vector<Sample>* sample) {
   if (file_.eof()) {
     LOG(INFO) << "End of file reached prematurely, while reading data at index "
               << index_;
+    position_ = 0;
   } else {
+    position_ = file_.tellg();
     LOG(ERROR) << "Error reading data at index " << index_;
   }
   ++index_;
-  position_ = file_.tellg();
   file_.close();
   return false;
 }
