@@ -104,7 +104,7 @@ void VaultWriter::writeAggregatedData(const Aggregator& data) {
   os_.write_varint(data.data_.size());
   for (const auto& entry : data.index_) {
     const Aggregator::SampleAggregator& sample = data.data_[entry.second];
-    uint16_t fill = sample.weight / 4;
+    // uint16_t fill = sample.weight / 4;
     os_.write_varint(entry.first);
     // Write the 'average'
     os_.write_uint16(sample.weight > 0 ? sample.weighted_total / sample.weight
