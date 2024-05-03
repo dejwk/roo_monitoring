@@ -3,13 +3,12 @@
 
 #include <map>
 
-#include "roo_monitoring.h"
 #include "common.h"
 #include "datastream.h"
 #include "log.h"
 #include "resolution.h"
-
-#include "roo_glog/logging.h"
+#include "roo_logging.h"
+#include "roo_monitoring.h"
 
 namespace roo_monitoring {
 
@@ -185,9 +184,10 @@ void VaultFileReader::seekForward(int64_t timestamp) {
 
 bool VaultFileReader::past_eof() const { return index_ >= kRangeElementCount; }
 
-std::ostream& operator<<(std::ostream& os, const VaultFileRef& file_ref) {
-  os << "[" << file_ref.resolution() << ", " << std::hex << file_ref.timestamp()
-     << ", " << file_ref.time_step() << ", "
+roo_logging::Stream& operator<<(roo_logging::Stream& os,
+                                const VaultFileRef& file_ref) {
+  os << "[" << file_ref.resolution() << ", " << roo_logging::hex
+     << file_ref.timestamp() << ", " << file_ref.time_step() << ", "
      << (file_ref.timestamp() + file_ref.time_span()) << "]";
   return os;
 }

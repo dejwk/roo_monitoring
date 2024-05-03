@@ -2,7 +2,7 @@
 #include "common.h"
 #include "datastream.h"
 
-#include "roo_glog/logging.h"
+#include "roo_logging.h"
 
 namespace roo_monitoring {
 

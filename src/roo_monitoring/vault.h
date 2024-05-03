@@ -7,6 +7,8 @@
 #include "log.h"  // for LogCursor.
 #include "sample.h"
 
+#include "roo_logging.h"
+
 namespace roo_monitoring {
 
 class Collection;
@@ -68,7 +70,8 @@ class VaultFileRef {
   Resolution resolution_;
 };
 
-std::ostream& operator<<(std::ostream& os, const VaultFileRef& file_ref);
+roo_logging::Stream& operator<<(roo_logging::Stream& os,
+                                const VaultFileRef& file_ref);
 
 // An 'iterator' class that allows to scan a single vault file sequentially.
 //

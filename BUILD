@@ -11,7 +11,7 @@ cc_library(
     ],
     visibility = ["//visibility:public"],
     deps = [
-        "//lib/roo_glog",
+        "//lib/roo_logging",
         "//roo_testing:arduino"
     ],
 )

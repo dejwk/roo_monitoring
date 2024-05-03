@@ -6,7 +6,7 @@
 
 #include "common.h"
 #include "datastream.h"
-#include "roo_glog/logging.h"
+#include "roo_logging.h"
 
 namespace roo_monitoring {
 
@@ -47,7 +47,7 @@ bool LogFileReader::next(int64_t* timestamp, std::vector<LogSample>* data,
   *timestamp = is_.read_varint();
   if (is_.bad()) return false;
 
-  // LOG(INFO) << "Read log data at timestamp: " << std::hex << *timestamp;
+  // LOG(INFO) << "Read log data at timestamp: " << roo_logging::hex << *timestamp;
   while (true) {
     int next = is_.peek_uint8();
     if (is_.eof()) {
@@ -119,8 +119,8 @@ bool LogReader::nextRange() {
     }
     ++group_end_;
   }
-  LOG(INFO) << "Processing log files for the range starting at " << std::hex
-            << *group_begin_;
+  LOG(INFO) << "Processing log files for the range starting at "
+            << roo_logging::hex << *group_begin_;
   return true;
 }
 
@@ -168,9 +168,9 @@ LogCursor LogReader::tell() {
 void LogReader::deleteRange() {
   CHECK(!isHotRange());
   for (auto i = group_begin_; i != group_end_; ++i) {
-    LOG(INFO) << "Removing processed log file " << std::hex << *i;
+    LOG(INFO) << "Removing processed log file " << roo_logging::hex << *i;
     if (remove(filepath(log_dir_, *i).c_str()) != 0) {
-      LOG(ERROR) << "Failed to remove processed log file " << std::hex << *i;
+      LOG(ERROR) << "Failed to remove processed log file " << roo_logging::hex << *i;
     }
   }
 }

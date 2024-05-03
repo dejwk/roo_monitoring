@@ -5,7 +5,7 @@
 #include "compaction.h"
 #include "datastream.h"
 #include "log.h"
-#include "roo_glog/logging.h"
+#include "roo_logging.h"
 #include "roo_monitoring.h"
 
 #ifdef ROO_TESTING
@@ -100,7 +100,7 @@ bool tryReadLogCompactionCursor(const char* cursor_path,
   *result = LogCompactionCursor(LogCursor(source_file, source_checkpoint),
                                 target_datum_index);
   LOG(INFO) << "Successfully read the cursor content " << cursor_path << ": "
-            << std::hex << source_file << std::dec << ", " << source_checkpoint
+            << roo_logging::hex << source_file << roo_logging::dec << ", " << source_checkpoint
             << ", " << (int)target_datum_index;
   return true;
 }
@@ -108,8 +108,8 @@ bool tryReadLogCompactionCursor(const char* cursor_path,
 bool writeCursor(const char* cursor_path, const LogCompactionCursor cursor) {
   DataOutputStream cursor_file(cursor_path, std::ios_base::out);
   if (cursor_file.is_open()) {
-    LOG(INFO) << "Writing cursor content " << cursor_path << ": " << std::hex
-              << cursor.log_cursor().file() << std::dec << ", "
+    LOG(INFO) << "Writing cursor content " << cursor_path << ": " << roo_logging::hex
+              << cursor.log_cursor().file() << roo_logging::dec << ", "
               << cursor.log_cursor().position() << ", "
               << (int)cursor.target_datum_index();
 
@@ -252,8 +252,8 @@ bool Writer::CompactVaultOneLevel(VaultFileRef ref, int16_t index_begin,
                                   int16_t index_end, bool hot) {
   VaultWriter writer(collection_, ref);
   VaultFileReader reader(collection_);
-  LOG(INFO) << "Compacting " << std::hex << writer.vault_ref()
-            << ", with end index " << std::dec << index_end;
+  LOG(INFO) << "Compacting " << roo_logging::hex << writer.vault_ref()
+            << ", with end index " << roo_logging::dec << index_end;
 
   // See if we can use a cursor file.
   String cursor_path = getLogCompactionCursorPath(collection_, ref);
@@ -304,8 +304,8 @@ bool Writer::CompactVaultOneLevel(VaultFileRef ref, int16_t index_begin,
                << writer.status();
     return false;
   }
-  LOG(INFO) << "Finished compacting " << std::hex << writer.vault_ref()
-            << ", with end index " << std::dec << writer.write_index();
+  LOG(INFO) << "Finished compacting " << roo_logging::hex << writer.vault_ref()
+            << ", with end index " << roo_logging::dec << writer.write_index();
   return true;
 }
 
@@ -347,7 +347,7 @@ VaultIterator::VaultIterator(const Collection* collection, int64_t start,
 void VaultIterator::next(std::vector<Sample>* sample) {
   if (current_.past_eof()) {
     current_ref_ = current_ref_.next();
-    LOG(INFO) << "Advancing to next file: " << std::hex
+    LOG(INFO) << "Advancing to next file: " << roo_logging::hex
               << current_ref_.timestamp();
     current_.open(current_ref_, 0, 0);
   }
