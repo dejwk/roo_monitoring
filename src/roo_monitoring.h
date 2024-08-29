@@ -55,15 +55,19 @@ class Writer {
   struct CompactionRange {
     int16_t index_begin;
     int16_t index_end;
+
+    bool isEmpty() const {
+      return index_end <= index_begin;
+    }
   };
 
   bool writeToVault(LogReader& reader, VaultFileRef ref,
                     CompactionRange& compaction_range);
 
-  bool CompactVault(VaultFileRef ref, int16_t index_begin, int16_t index_end,
-                    bool hot);
-  bool CompactVaultOneLevel(VaultFileRef ref, int16_t index_begin,
-                            int16_t index_end, bool hot);
+  bool CompactVault(VaultFileRef ref, const CompactionRange& range, bool hot);
+
+  bool CompactVaultOneLevel(VaultFileRef ref, const CompactionRange& range,
+                            bool hot);
 
   Collection* collection_;
   String log_dir_;

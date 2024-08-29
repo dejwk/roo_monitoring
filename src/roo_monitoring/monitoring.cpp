@@ -163,11 +163,9 @@ bool Writer::Flush() {
   while (reader.nextRange()) {
     VaultFileRef ref =
         VaultFileRef::Lookup(reader.range_floor(), collection_->resolution());
-    CompactionRange compaction_range;
-    if (!writeToVault(reader, ref, compaction_range)) return false;
-    if (!CompactVault(ref, compaction_range.index_begin,
-                      compaction_range.index_end, reader.isHotRange()))
-      return false;
+    CompactionRange range;
+    if (!writeToVault(reader, ref, range)) return false;
+    if (!CompactVault(ref, range, reader.isHotRange())) return false;
   }
   return true;
 }
@@ -232,23 +230,22 @@ bool Writer::writeToVault(LogReader& reader, VaultFileRef ref,
   return true;
 }
 
-bool Writer::CompactVault(VaultFileRef ref, int16_t index_begin,
-                          int16_t index_end, bool hot) {
+bool Writer::CompactVault(VaultFileRef ref, const CompactionRange& range,
+                          bool hot) {
   LOG(INFO) << "Starting vault compaction.";
   while (true) {
     VaultFileRef parent = ref.parent();
-    int parent_index_begin = 64 * ref.sibling_index() + (index_begin >> 2);
-    int parent_index_end = 64 * ref.sibling_index() + (index_end >> 2);
+    CompactionRange parent_range = {
+        .index_begin = 64 * ref.sibling_index() + (range.index_begin >> 2),
+        .index_end = 64 * ref.sibling_index() + (range.index_end >> 2)};
     ref = parent;
-    index_begin = parent_index_begin;
-    index_end = parent_index_end;
-    if (index_end <= index_begin || ref.resolution() > kMaxResolution) {
+    if (parent_range.isEmpty() || ref.resolution() > kMaxResolution) {
       LOG(INFO) << "Vault compacton finished.";
       return true;
     }
-    CHECK_LE(index_end, 256);
-    CHECK_GT(index_end, 0);
-    if (!CompactVaultOneLevel(ref, index_begin, index_end,
+    CHECK_LE(parent_range.index_end, 256);
+    CHECK_GT(parent_range.index_end, 0);
+    if (!CompactVaultOneLevel(ref, parent_range,
                               hot || ref.sibling_index() < 3)) {
       LOG(ERROR) << "Vault compaction failed at resolution "
                  << ref.resolution();
@@ -257,12 +254,12 @@ bool Writer::CompactVault(VaultFileRef ref, int16_t index_begin,
   }
 }
 
-bool Writer::CompactVaultOneLevel(VaultFileRef ref, int16_t index_begin,
-                                  int16_t index_end, bool hot) {
+bool Writer::CompactVaultOneLevel(VaultFileRef ref,
+                                  const CompactionRange& range, bool hot) {
   VaultWriter writer(collection_, ref);
   VaultFileReader reader(collection_);
   LOG(INFO) << "Compacting " << roo_logging::hex << writer.vault_ref()
-            << ", with end index " << roo_logging::dec << index_end;
+            << ", with end index " << roo_logging::dec << range.index_end;
 
   // See if we can use a cursor file.
   String cursor_path = getLogCompactionCursorPath(collection_, ref);
@@ -282,7 +279,7 @@ bool Writer::CompactVaultOneLevel(VaultFileRef ref, int16_t index_begin,
   std::vector<Sample> sample_group;
   Aggregator aggregator;
 
-  while (writer.write_index() < index_end) {
+  while (writer.write_index() < range.index_end) {
     CHECK_LE(reader.index(), 252);
     for (int i = 0; i < 4; ++i) {
       reader.next(&sample_group);
