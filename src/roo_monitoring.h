@@ -52,6 +52,14 @@ class Writer {
   bool Flush();
 
  private:
+  struct CompactionRange {
+    int16_t index_begin;
+    int16_t index_end;
+  };
+
+  bool writeToVault(LogReader& reader, VaultFileRef ref,
+                    CompactionRange& compaction_range);
+
   bool CompactVault(VaultFileRef ref, int16_t index_begin, int16_t index_end,
                     bool hot);
   bool CompactVaultOneLevel(VaultFileRef ref, int16_t index_begin,

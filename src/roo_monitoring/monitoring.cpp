@@ -100,18 +100,18 @@ bool tryReadLogCompactionCursor(const char* cursor_path,
   *result = LogCompactionCursor(LogCursor(source_file, source_checkpoint),
                                 target_datum_index);
   LOG(INFO) << "Successfully read the cursor content " << cursor_path << ": "
-            << roo_logging::hex << source_file << roo_logging::dec << ", " << source_checkpoint
-            << ", " << (int)target_datum_index;
+            << roo_logging::hex << source_file << roo_logging::dec << ", "
+            << source_checkpoint << ", " << (int)target_datum_index;
   return true;
 }
 
 bool writeCursor(const char* cursor_path, const LogCompactionCursor cursor) {
   DataOutputStream cursor_file(cursor_path, std::ios_base::out);
   if (cursor_file.is_open()) {
-    LOG(INFO) << "Writing cursor content " << cursor_path << ": " << roo_logging::hex
-              << cursor.log_cursor().file() << roo_logging::dec << ", "
-              << cursor.log_cursor().position() << ", "
-              << (int)cursor.target_datum_index();
+    LOG(INFO) << "Writing cursor content " << cursor_path << ": "
+              << roo_logging::hex << cursor.log_cursor().file()
+              << roo_logging::dec << ", " << cursor.log_cursor().position()
+              << ", " << (int)cursor.target_datum_index();
 
     cursor_file.write_uint8(cursor.target_datum_index());
     cursor_file.write_varint(cursor.log_cursor().file());
@@ -161,65 +161,74 @@ bool Writer::Flush() {
   LogReader reader(log_dir_.c_str(), collection_->resolution(),
                    writer_.first_timestamp());
   while (reader.nextRange()) {
-    VaultWriter writer(
-        collection_,
-        VaultFileRef::Lookup(reader.range_floor(), collection_->resolution()));
+    VaultFileRef ref =
+        VaultFileRef::Lookup(reader.range_floor(), collection_->resolution());
+    CompactionRange compaction_range;
+    if (!writeToVault(reader, ref, compaction_range)) return false;
+    if (!CompactVault(ref, compaction_range.index_begin,
+                      compaction_range.index_end, reader.isHotRange()))
+      return false;
+  }
+  return true;
+}
 
-    // See if we can use cursor.
-    String cursor_path =
-        getLogCompactionCursorPath(collection_, writer.vault_ref());
-    LogCompactionCursor cursor;
-    if (tryReadLogCompactionCursor(cursor_path.c_str(), &cursor) &&
-        reader.seek(cursor.log_cursor())) {
-      writer.openExisting(cursor.target_datum_index());
-      if (!writer.good()) return false;
-    } else {
-      if (errno != 0) return false;
-      writer.openNew();
-      if (!writer.good()) return false;
+bool Writer::writeToVault(LogReader& reader, VaultFileRef ref,
+                          CompactionRange& compaction_range) {
+  VaultWriter writer(collection_, ref);
+
+  // See if we can use cursor.
+  String cursor_path = getLogCompactionCursorPath(collection_, ref);
+  LogCompactionCursor cursor;
+  if (tryReadLogCompactionCursor(cursor_path.c_str(), &cursor) &&
+      reader.seek(cursor.log_cursor())) {
+    writer.openExisting(cursor.target_datum_index());
+    if (!writer.good()) return false;
+  } else {
+    if (errno != 0) return false;
+    writer.openNew();
+    if (!writer.good()) return false;
+  }
+  remove(cursor_path.c_str());
+
+  // In any case, now just iterate and compact.
+  int64_t increment = timestamp_increment(1, collection_->resolution());
+  int64_t current =
+      writer.vault_ref().timestamp() +
+      timestamp_increment(writer.write_index(), collection_->resolution());
+  int16_t compaction_index_begin = writer.write_index();
+  int64_t timestamp;
+  std::vector<LogSample> data;
+  while (reader.nextSample(&timestamp, &data)) {
+    if (timestamp < current) {
+      // Ignoring out-of-order log entries.
+      continue;
     }
-    remove(cursor_path.c_str());
-
-    // In any case, now just iterate and compact.
-    int64_t increment = timestamp_increment(1, collection_->resolution());
-    int64_t current =
-        writer.vault_ref().timestamp() +
-        timestamp_increment(writer.write_index(), collection_->resolution());
-    int16_t compaction_index_begin = writer.write_index();
-    int64_t timestamp;
-    std::vector<LogSample> data;
-    while (reader.nextSample(&timestamp, &data)) {
-      if (timestamp < current) {
-        // Ignoring out-of-order log entries.
-        continue;
-      }
-      while (current < timestamp) {
-        writer.writeEmptyData();
-        current += increment;
-      }
-      CHECK_EQ(current, timestamp);
-      writer.writeLogData(data);
+    while (current < timestamp) {
+      writer.writeEmptyData();
       current += increment;
     }
-    if (!writer.good()) return false;
-
-    if (reader.isHotRange()) {
-      if (!writeCursor(
-              cursor_path.c_str(),
-              LogCompactionCursor(reader.tell(), writer.write_index()))) {
-        return false;
-      }
-    } else {
-      while (writer.write_index() < kRangeElementCount) {
-        writer.writeEmptyData();
-        current += increment;
-      }
-      reader.deleteRange();
-    }
-    writer.close();
-    CompactVault(writer.vault_ref(), compaction_index_begin,
-                 writer.write_index(), reader.isHotRange());
+    CHECK_EQ(current, timestamp);
+    writer.writeLogData(data);
+    current += increment;
   }
+  if (!writer.good()) return false;
+
+  if (reader.isHotRange()) {
+    if (!writeCursor(
+            cursor_path.c_str(),
+            LogCompactionCursor(reader.tell(), writer.write_index()))) {
+      return false;
+    }
+  } else {
+    while (writer.write_index() < kRangeElementCount) {
+      writer.writeEmptyData();
+      current += increment;
+    }
+    reader.deleteRange();
+  }
+  compaction_range.index_begin = compaction_index_begin;
+  compaction_range.index_end = writer.write_index();
+  writer.close();
   return true;
 }
 
