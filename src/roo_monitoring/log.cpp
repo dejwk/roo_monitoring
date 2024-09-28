@@ -47,7 +47,8 @@ bool LogFileReader::next(int64_t* timestamp, std::vector<LogSample>* data,
   *timestamp = is_.read_varint();
   if (is_.bad()) return false;
 
-  // LOG(INFO) << "Read log data at timestamp: " << roo_logging::hex << *timestamp;
+  // LOG(INFO) << "Read log data at timestamp: " << roo_logging::hex <<
+  // *timestamp;
   while (true) {
     int next = is_.peek_uint8();
     if (is_.eof()) {
@@ -83,11 +84,33 @@ bool LogFileReader::next(int64_t* timestamp, std::vector<LogSample>* data,
   return true;
 }
 
-LogReader::LogReader(const char* log_dir, Resolution resolution,
-                     int64_t hot_file)
+std::vector<int64_t> CachedLogDir::list() {
+  sync();
+  std::vector<int64_t> result;
+  for (int64_t e : entries_) {
+    result.push_back(e);
+  }
+  std::sort(result.begin(), result.end());
+  LOG(INFO) << "LIst finished with " << result.size();
+  return result;
+}
+
+void CachedLogDir::sync() {
+  if (synced_) return;
+  entries_.clear();
+  std::vector<int64_t> entries = listFiles(log_dir_);
+  for (int64_t e : entries) {
+    entries_.insert(e);
+  }
+  synced_ = true;
+}
+
+LogReader::LogReader(const char* log_dir, CachedLogDir& cache,
+                     Resolution resolution, int64_t hot_file)
     : log_dir_(log_dir),
+      cache_(cache),
       resolution_(resolution),
-      entries_(listFiles(log_dir)),
+      entries_(cache_.list()),
       group_begin_(entries_.begin()),
       cursor_(entries_.begin()),
       group_end_(entries_.begin()),
@@ -170,13 +193,17 @@ void LogReader::deleteRange() {
   for (auto i = group_begin_; i != group_end_; ++i) {
     LOG(INFO) << "Removing processed log file " << roo_logging::hex << *i;
     if (remove(filepath(log_dir_, *i).c_str()) != 0) {
-      LOG(ERROR) << "Failed to remove processed log file " << roo_logging::hex << *i;
+      LOG(ERROR) << "Failed to remove processed log file " << roo_logging::hex
+                 << *i;
     }
+    cache_.erase(*i);
   }
 }
 
-LogWriter::LogWriter(const char* log_dir, Resolution resolution)
+LogWriter::LogWriter(const char* log_dir, CachedLogDir& cache,
+                     Resolution resolution)
     : log_dir_(log_dir),
+      cache_(cache),
       resolution_(resolution),
       first_timestamp_(-1),
       last_timestamp_(-1),
@@ -202,6 +229,7 @@ void LogWriter::open(std::ios_base::openmode mode) {
   if (!recursiveMkDir(path.c_str())) return;
   //   last_log_file_path_ = path;
   os_.open(path.c_str(), mode);
+  cache_.insert(first_timestamp_);
 }
 
 void LogWriter::close() { os_.close(); }

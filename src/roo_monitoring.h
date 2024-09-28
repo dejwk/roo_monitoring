@@ -59,6 +59,8 @@ class Writer {
 
   IoState io_state() const { return io_state_; }
 
+  void flushSome();
+
  private:
   friend class WriteTransaction;
   // struct CompactionRange {
@@ -80,6 +82,7 @@ class Writer {
 
   Collection* collection_;
   String log_dir_;
+  CachedLogDir cache_;
   LogWriter writer_;
   IoState io_state_;
   bool need_flush_;
