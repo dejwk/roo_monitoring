@@ -1,7 +1,8 @@
 #pragma once
 
-#include <set>
 #include <vector>
+
+#include "roo_collections/flat_small_hash_set.h"
 
 #include "datastream.h"
 #include "resolution.h"
@@ -109,7 +110,7 @@ class LogWriter {
 
   // For tentatively deduplicating data reported in the same target
   // resolution bucket.
-  std::set<uint64_t> streams_;
+  roo_collections::FlatSmallHashSet<uint64_t> streams_;
 
   int64_t first_timestamp_;
   int64_t last_timestamp_;
