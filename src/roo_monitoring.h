@@ -44,35 +44,45 @@ class VaultWriter;
 // Represents a write interface to the monitoring collection.
 class Writer {
  public:
+  enum Status { OK, IN_PROGRESS, FAILED };
+
+  enum IoState { IOSTATE_OK, IOSTATE_ERROR };
+
   Writer(Collection* collection);
+
   const Collection& collection() const { return *collection_; }
 
-  // Needs to be called periodically in order to actually incorporate the logged
+  // Needs to be called periodically in order to actually incorporate the
+  // logged
   // data into the vault.
-  bool Flush();
+  void flushAll();
+
+  IoState io_state() const { return io_state_; }
 
  private:
-  struct CompactionRange {
-    int16_t index_begin;
-    int16_t index_end;
+  friend class WriteTransaction;
+  // struct CompactionRange {
+  //   // int16_t index_begin;
+  //   int16_t index_end;
 
-    bool isEmpty() const {
-      return index_end <= index_begin;
-    }
-  };
+  //   // bool isEmpty() const {
+  //   //   return index_end <= index_begin;
+  //   // }
+  // };
 
-  bool writeToVault(LogReader& reader, VaultFileRef ref,
-                    CompactionRange& compaction_range);
+  void writeToVault(LogReader& reader, VaultFileRef ref,
+                    int16_t& compaction_index_end);
 
-  bool CompactVault(VaultFileRef ref, const CompactionRange& range, bool hot);
+  void CompactVault(VaultFileRef& ref, int16_t compaction_index_end, bool hot);
 
-  bool CompactVaultOneLevel(VaultFileRef ref, const CompactionRange& range,
-                            bool hot);
+  Status CompactVaultOneLevel(VaultFileRef ref, int16_t compaction_index_end,
+                              bool hot);
 
   Collection* collection_;
   String log_dir_;
   LogWriter writer_;
-  friend class WriteTransaction;
+  IoState io_state_;
+  bool need_flush_;
 };
 
 // Represents a single write operation to the monitoring collection. Should be
