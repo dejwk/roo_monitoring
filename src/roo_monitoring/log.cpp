@@ -91,7 +91,6 @@ std::vector<int64_t> CachedLogDir::list() {
     result.push_back(e);
   }
   std::sort(result.begin(), result.end());
-  LOG(INFO) << "LIst finished with " << result.size();
   return result;
 }
 
