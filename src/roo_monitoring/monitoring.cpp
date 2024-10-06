@@ -164,12 +164,11 @@ void Writer::flushAll() {
   LogReader reader(log_dir_.c_str(), cache_, collection_->resolution(),
                    writer_.first_timestamp());
   while (reader.nextRange()) {
-    VaultFileRef ref =
+    compaction_head_ =
         VaultFileRef::Lookup(reader.range_floor(), collection_->resolution());
-    int16_t compaction_index_end;
-    writeToVault(reader, ref, compaction_index_end);
+    writeToVault(reader, compaction_head_, compaction_head_index_end_);
     if (io_state() != IOSTATE_OK) return;
-    compactVault(ref, compaction_index_end, reader.isHotRange());
+    compactVault(reader.isHotRange());
     if (io_state() != IOSTATE_OK) return;
   }
 }
@@ -261,41 +260,41 @@ void Writer::writeToVault(LogReader& reader, VaultFileRef ref,
   writer.close();
 }
 
-void Writer::compactVault(VaultFileRef& ref, int16_t compaction_index_end,
-                          bool hot) {
+void Writer::compactVault(bool hot) {
   LOG(INFO) << "Starting vault compaction.";
   while (true) {
-    VaultFileRef parent = ref.parent();
-    compaction_index_end =
-        64 * ref.sibling_index() + (compaction_index_end >> 2);
-    ref = parent;
-    if (ref.resolution() > kMaxResolution) {
+    VaultFileRef parent = compaction_head_.parent();
+    compaction_head_index_end_ = 64 * compaction_head_.sibling_index() +
+                                 (compaction_head_index_end_ >> 2);
+    compaction_head_ = parent;
+    if (compaction_head_.resolution() > kMaxResolution) {
       LOG(INFO) << "Vault compacton finished.";
       return;
     }
-    if (compaction_index_end == 0) {
+    if (compaction_head_index_end_ == 0) {
       LOG(INFO) << "Compaction index = 0";
       // We're definitely done compacting.
       return;
     }
-    CHECK_LE(compaction_index_end, 256);
-    CHECK_GT(compaction_index_end, 0);
-    Status status = compactVaultOneLevel(ref, compaction_index_end,
-                                         hot || ref.sibling_index() < 3);
+    CHECK_LE(compaction_head_index_end_, 256);
+    CHECK_GT(compaction_head_index_end_, 0);
+    Status status =
+        compactVaultOneLevel(compaction_head_, compaction_head_index_end_,
+                             hot || compaction_head_.sibling_index() < 3);
     if (status == Writer::OK) {
       // We're done compacting.
       return;
     } else if (status == Writer::FAILED) {
       LOG(ERROR) << "Vault compaction failed at resolution "
-                 << ref.resolution();
+                 << compaction_head_.resolution();
       io_state_ = IOSTATE_ERROR;
       return;
     }
   }
 }
 
-Writer::Status Writer::compactVaultOneLevel(VaultFileRef ref,
-                                            int16_t compaction_index_end,
+Writer::Status Writer::compactVaultOneLevel(VaultFileRef& ref,
+                                            int16_t& compaction_index_end,
                                             bool hot) {
   VaultWriter writer(collection_, ref);
   VaultFileReader reader(collection_);

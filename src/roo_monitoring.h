@@ -75,9 +75,9 @@ class Writer {
   void writeToVault(LogReader& reader, VaultFileRef ref,
                     int16_t& compaction_index_end);
 
-  void compactVault(VaultFileRef& ref, int16_t compaction_index_end, bool hot);
+  void compactVault(bool hot);
 
-  Status compactVaultOneLevel(VaultFileRef ref, int16_t compaction_index_end,
+  Status compactVaultOneLevel(VaultFileRef& ref, int16_t& compaction_index_end,
                               bool hot);
 
   Collection* collection_;
@@ -85,6 +85,9 @@ class Writer {
   CachedLogDir cache_;
   LogWriter writer_;
   IoState io_state_;
+
+  VaultFileRef compaction_head_;
+  int16_t compaction_head_index_end_;
   bool need_flush_;
 };
 
