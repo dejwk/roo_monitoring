@@ -53,8 +53,7 @@ class Writer {
   const Collection& collection() const { return *collection_; }
 
   // Needs to be called periodically in order to actually incorporate the
-  // logged
-  // data into the vault.
+  // logged data into the vault.
   void flushAll();
 
   IoState io_state() const { return io_state_; }
@@ -63,22 +62,13 @@ class Writer {
 
  private:
   friend class WriteTransaction;
-  // struct CompactionRange {
-  //   // int16_t index_begin;
-  //   int16_t index_end;
-
-  //   // bool isEmpty() const {
-  //   //   return index_end <= index_begin;
-  //   // }
-  // };
 
   // Returns the index past written to the vault.
   int16_t writeToVault(LogReader& reader, VaultFileRef ref);
 
-  void compactVault(bool hot);
+  // void compactVault();
 
-  Status compactVaultOneLevel(VaultFileRef& ref, int16_t& compaction_index_end,
-                              bool hot);
+  Status compactVaultOneLevel();
 
   Collection* collection_;
   String log_dir_;
@@ -88,7 +78,9 @@ class Writer {
 
   VaultFileRef compaction_head_;
   int16_t compaction_head_index_end_;
-  bool need_flush_;
+  bool is_hot_range_;
+
+  bool needs_flush_;
 };
 
 // Represents a single write operation to the monitoring collection. Should be
