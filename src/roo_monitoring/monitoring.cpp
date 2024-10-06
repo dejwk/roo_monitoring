@@ -166,7 +166,7 @@ void Writer::flushAll() {
   while (reader.nextRange()) {
     compaction_head_ =
         VaultFileRef::Lookup(reader.range_floor(), collection_->resolution());
-    writeToVault(reader, compaction_head_, compaction_head_index_end_);
+    compaction_head_index_end_ = writeToVault(reader, compaction_head_);
     if (io_state() != IOSTATE_OK) return;
     compactVault(reader.isHotRange());
     if (io_state() != IOSTATE_OK) return;
@@ -188,8 +188,7 @@ void Writer::flushAll() {
 //   return OK;
 // }
 
-void Writer::writeToVault(LogReader& reader, VaultFileRef ref,
-                          int16_t& compaction_index_end) {
+int16_t Writer::writeToVault(LogReader& reader, VaultFileRef ref) {
   VaultWriter writer(collection_, ref);
 
   // See if we can use cursor.
@@ -200,17 +199,17 @@ void Writer::writeToVault(LogReader& reader, VaultFileRef ref,
     writer.openExisting(cursor.target_datum_index());
     if (!writer.good()) {
       io_state_ = IOSTATE_ERROR;
-      return;
+      return -1;
     }
   } else {
     if (errno != 0) {
       io_state_ = IOSTATE_ERROR;
-      return;
+      return -1;
     }
     writer.openNew();
     if (!writer.good()) {
       io_state_ = IOSTATE_ERROR;
-      return;
+      return -1;
     }
   }
   remove(cursor_path.c_str());
@@ -220,7 +219,6 @@ void Writer::writeToVault(LogReader& reader, VaultFileRef ref,
   int64_t current =
       writer.vault_ref().timestamp() +
       timestamp_increment(writer.write_index(), collection_->resolution());
-  // int16_t compaction_index_begin = writer.write_index();
   int64_t timestamp;
   std::vector<LogSample> data;
   while (reader.nextSample(&timestamp, &data)) {
@@ -238,7 +236,7 @@ void Writer::writeToVault(LogReader& reader, VaultFileRef ref,
   }
   if (!writer.good()) {
     io_state_ = IOSTATE_ERROR;
-    return;
+    return -1;
   }
 
   if (reader.isHotRange()) {
@@ -246,7 +244,7 @@ void Writer::writeToVault(LogReader& reader, VaultFileRef ref,
             cursor_path.c_str(),
             LogCompactionCursor(reader.tell(), writer.write_index()))) {
       io_state_ = IOSTATE_ERROR;
-      return;
+      return -1;
     }
   } else {
     while (writer.write_index() < kRangeElementCount) {
@@ -256,8 +254,9 @@ void Writer::writeToVault(LogReader& reader, VaultFileRef ref,
     reader.deleteRange();
   }
   // compaction_range.index_begin = compaction_index_begin;
-  compaction_index_end = writer.write_index();
+  int16_t compaction_index_end = writer.write_index();
   writer.close();
+  return compaction_index_end;
 }
 
 void Writer::compactVault(bool hot) {

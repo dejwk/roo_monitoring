@@ -72,8 +72,8 @@ class Writer {
   //   // }
   // };
 
-  void writeToVault(LogReader& reader, VaultFileRef ref,
-                    int16_t& compaction_index_end);
+  // Returns the index past written to the vault.
+  int16_t writeToVault(LogReader& reader, VaultFileRef ref);
 
   void compactVault(bool hot);
 
