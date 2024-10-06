@@ -161,33 +161,47 @@ bool writeCursor(const char* cursor_path, const LogCompactionCursor cursor) {
 // run.
 
 void Writer::flushAll() {
-  LogReader reader(log_dir_.c_str(), cache_, collection_->resolution(),
-                   writer_.first_timestamp());
-  while (reader.nextRange()) {
-    compaction_head_ =
-        VaultFileRef::Lookup(reader.range_floor(), collection_->resolution());
-    compaction_head_index_end_ = writeToVault(reader, compaction_head_);
-    is_hot_range_ = reader.isHotRange();
-    if (io_state() != IOSTATE_OK) return;
-    needs_flush_ = true;
-    LOG(INFO) << "Starting vault compaction.";
-    while (needs_flush_) {
-      flushSome();
-    }
-    if (io_state() != IOSTATE_OK) return;
-  }
+  while (flush_in_progress_) flushSome();
+  flushSome();
+  while (flush_in_progress_) flushSome();
 }
 
 void Writer::flushSome() {
-  Status status = compactVaultOneLevel();
-  if (status == Writer::OK) {
-    // We're done compacting.
-    needs_flush_ = false;
-  } else if (status == Writer::FAILED) {
-    LOG(ERROR) << "Vault compaction failed at resolution "
-               << compaction_head_.resolution();
-    io_state_ = IOSTATE_ERROR;
-    needs_flush_ = false;
+  if (flush_in_progress_) {
+    Status status = compactVaultOneLevel();
+    if (status == Writer::OK) {
+      flush_in_progress_ = false;
+      // We're done compacting. Check if there is more to read?
+      LogReader reader(log_dir_.c_str(), cache_, collection_->resolution(),
+                      writer_.first_timestamp());
+      if (reader.nextRange() && !reader.isHotRange()) {
+        // Has some historic range; let's continue compacting.
+        compaction_head_ =
+            VaultFileRef::Lookup(reader.range_floor(), collection_->resolution());
+        compaction_head_index_end_ = writeToVault(reader, compaction_head_);
+        is_hot_range_ = reader.isHotRange();
+        if (io_state() != IOSTATE_OK) return;
+        flush_in_progress_ = true;
+      }
+    } else if (status == Writer::FAILED) {
+      LOG(ERROR) << "Vault compaction failed at resolution "
+                << compaction_head_.resolution();
+      io_state_ = IOSTATE_ERROR;
+      flush_in_progress_ = false;
+    }
+  } else {
+    // flush not in progress.
+    LogReader reader(log_dir_.c_str(), cache_, collection_->resolution(),
+                    writer_.first_timestamp());
+    if (reader.nextRange()) {
+      compaction_head_ =
+          VaultFileRef::Lookup(reader.range_floor(), collection_->resolution());
+      compaction_head_index_end_ = writeToVault(reader, compaction_head_);
+      is_hot_range_ = reader.isHotRange();
+      if (io_state() != IOSTATE_OK) return;
+      flush_in_progress_ = true;
+      LOG(INFO) << "Starting vault compaction.";
+    }
   }
 }
 
@@ -301,14 +315,15 @@ Writer::Status Writer::compactVaultOneLevel() {
   }
   remove(cursor_path.c_str());
 
+  if (writer.write_index() >= compaction_head_index_end_) {
+    // The vault already has data past the current index. We will not be
+    // overwriting it. Nothing more to do.
+    return Writer::OK;
+  }
+
   // Now iterate and compact.
   std::vector<Sample> sample_group;
   Aggregator aggregator;
-
-  if (writer.write_index() >= compaction_head_index_end_) {
-    // We're done!
-    return Writer::OK;
-  }
   do {
     CHECK_LE(reader.index(), 252);
     for (int i = 0; i < 4; ++i) {
@@ -326,6 +341,7 @@ Writer::Status Writer::compactVaultOneLevel() {
     }
   } while (writer.write_index() < compaction_head_index_end_);
   if (writer.write_index() > 0 && writer.write_index() < 256) {
+    // The vault file is unfinished; create a write cursor for it.
     writeCursor(cursor_path.c_str(),
                 LogCompactionCursor(reader.tell(), writer.write_index()));
   }

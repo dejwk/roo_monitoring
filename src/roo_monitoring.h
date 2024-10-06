@@ -60,13 +60,13 @@ class Writer {
 
   void flushSome();
 
+  bool isFlushInProgress() { return flush_in_progress_; }
+
  private:
   friend class WriteTransaction;
 
   // Returns the index past written to the vault.
   int16_t writeToVault(LogReader& reader, VaultFileRef ref);
-
-  // void compactVault();
 
   Status compactVaultOneLevel();
 
@@ -80,7 +80,7 @@ class Writer {
   int16_t compaction_head_index_end_;
   bool is_hot_range_;
 
-  bool needs_flush_;
+  bool flush_in_progress_;
 };
 
 // Represents a single write operation to the monitoring collection. Should be
