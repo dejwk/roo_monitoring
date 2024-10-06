@@ -75,9 +75,9 @@ class Writer {
   void writeToVault(LogReader& reader, VaultFileRef ref,
                     int16_t& compaction_index_end);
 
-  void CompactVault(VaultFileRef& ref, int16_t compaction_index_end, bool hot);
+  void compactVault(VaultFileRef& ref, int16_t compaction_index_end, bool hot);
 
-  Status CompactVaultOneLevel(VaultFileRef ref, int16_t compaction_index_end,
+  Status compactVaultOneLevel(VaultFileRef ref, int16_t compaction_index_end,
                               bool hot);
 
   Collection* collection_;

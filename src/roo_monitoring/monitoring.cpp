@@ -169,7 +169,7 @@ void Writer::flushAll() {
     int16_t compaction_index_end;
     writeToVault(reader, ref, compaction_index_end);
     if (io_state() != IOSTATE_OK) return;
-    CompactVault(ref, compaction_index_end, reader.isHotRange());
+    compactVault(ref, compaction_index_end, reader.isHotRange());
     if (io_state() != IOSTATE_OK) return;
   }
 }
@@ -261,7 +261,7 @@ void Writer::writeToVault(LogReader& reader, VaultFileRef ref,
   writer.close();
 }
 
-void Writer::CompactVault(VaultFileRef& ref, int16_t compaction_index_end,
+void Writer::compactVault(VaultFileRef& ref, int16_t compaction_index_end,
                           bool hot) {
   LOG(INFO) << "Starting vault compaction.";
   while (true) {
@@ -280,7 +280,7 @@ void Writer::CompactVault(VaultFileRef& ref, int16_t compaction_index_end,
     }
     CHECK_LE(compaction_index_end, 256);
     CHECK_GT(compaction_index_end, 0);
-    Status status = CompactVaultOneLevel(ref, compaction_index_end,
+    Status status = compactVaultOneLevel(ref, compaction_index_end,
                                          hot || ref.sibling_index() < 3);
     if (status == Writer::OK) {
       // We're done compacting.
@@ -294,7 +294,7 @@ void Writer::CompactVault(VaultFileRef& ref, int16_t compaction_index_end,
   }
 }
 
-Writer::Status Writer::CompactVaultOneLevel(VaultFileRef ref,
+Writer::Status Writer::compactVaultOneLevel(VaultFileRef ref,
                                             int16_t compaction_index_end,
                                             bool hot) {
   VaultWriter writer(collection_, ref);
