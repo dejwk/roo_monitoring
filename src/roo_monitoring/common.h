@@ -2,6 +2,7 @@
 
 #include <stdint.h>
 #include <vector>
+#include "roo_io/fs/filesystem.h"
 
 #include <Arduino.h>
 
@@ -15,16 +16,13 @@ extern const char* kLogSubPath;
 
 static char toHexDigit(int d) { return (d < 10) ? d + '0' : d - 10 + 'A'; }
 
-bool isdir(const char* path);
-bool recursiveMkDir(const char* path);
-
 String subdir(String base, const String& sub);
 String filepath(String dir, int64_t file);
 
 // Lists 'timestamp-named' files in the specified dir, and returns a vector of
 // uint64 corresponding to the timestamps (in ms since Epoch), sorted by
 // timestamp.
-std::vector<int64_t> listFiles(const char* dirname);
+std::vector<int64_t> listFiles(roo_io::Mount& fs, const char* dirname);
 
 // Helper class for generating filenames corresponding to timestamps.
 class Filename {

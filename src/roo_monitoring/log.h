@@ -2,9 +2,11 @@
 
 #include <vector>
 
-#include "datastream.h"
 #include "resolution.h"
 #include "roo_collections/flat_small_hash_set.h"
+#include "roo_io/data/multipass_input_stream_reader.h"
+#include "roo_io/data/output_stream_writer.h"
+#include "roo_io/fs/filesystem.h"
 
 namespace roo_monitoring {
 
@@ -27,7 +29,8 @@ inline bool operator<(const LogSample& a, const LogSample& b) {
 
 class CachedLogDir {
  public:
-  CachedLogDir(const char* log_dir) : log_dir_(log_dir), synced_(false) {}
+  CachedLogDir(roo_io::Filesystem& fs, const char* log_dir)
+      : fs_(fs), log_dir_(log_dir), synced_(false) {}
 
   void insert(int64_t entry) {
     sync();
@@ -44,6 +47,7 @@ class CachedLogDir {
  private:
   void sync();
 
+  roo_io::Filesystem& fs_;
   const char* log_dir_;
   bool synced_;
 
@@ -53,18 +57,22 @@ class CachedLogDir {
 // For reading from a single log file.
 class LogFileReader {
  public:
-  LogFileReader() {}
+  LogFileReader(roo_io::Mount& mount) : fs_(mount) {}
 
   bool open(const char* path, int64_t checkpoint);
-  bool is_open() const { return is_.is_open(); }
-  void close() { is_.close(); }
+
+  bool is_open() const { return reader_.isOpen(); }
+
+  void close() { reader_.close(); }
 
   int64_t checkpoint() const { return checkpoint_; }
 
   bool next(int64_t* timestamp, std::vector<LogSample>* data, bool is_hot);
 
  private:
-  DataInputStream is_;
+  roo_io::Mount& fs_;
+  roo_io::MultipassInputStreamReader reader_;
+  uint8_t lookahead_entry_type_;
   int64_t checkpoint_;
 };
 
@@ -85,8 +93,8 @@ class LogCursor {
 
 class LogReader {
  public:
-  LogReader(const char* log_dir, CachedLogDir& cache, Resolution resolution,
-            int64_t hot_file = -1);
+  LogReader(roo_io::Mount& fs, const char* log_dir, CachedLogDir& cache,
+            Resolution resolution, int64_t hot_file = -1);
 
   bool nextRange();
   int64_t range_floor() const { return range_floor_; }
@@ -101,6 +109,7 @@ class LogReader {
  private:
   bool open(int64_t file, uint64_t position);
 
+  roo_io::Mount& fs_;
   const char* log_dir_;
   CachedLogDir& cache_;
   Resolution resolution_;
@@ -117,11 +126,12 @@ class LogReader {
 
 class LogWriter {
  public:
-  LogWriter(const char* log_dir, CachedLogDir& cache, Resolution resolution);
+  LogWriter(roo_io::Filesystem& fs, const char* log_dir, CachedLogDir& cache,
+            Resolution resolution);
 
   Resolution resolution() const { return resolution_; }
 
-  void open(std::ios_base::openmode mode);
+  void open(roo_io::FileUpdatePolicy update_policy);
   void close();
 
   void write(int64_t timestamp, uint64_t stream_id, uint16_t datum);
@@ -135,7 +145,9 @@ class LogWriter {
   CachedLogDir& cache_;
   Resolution resolution_;
 
-  DataOutputStream os_;
+  roo_io::Filesystem& fs_;
+  roo_io::Mount mount_;
+  roo_io::OutputStreamWriter writer_;
 
   // For tentatively deduplicating data reported in the same target
   // resolution bucket.

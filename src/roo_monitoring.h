@@ -2,9 +2,9 @@
 
 #include <Arduino.h>
 
-#include <fstream>
 #include <set>
 
+#include "roo_io/fs/filesystem.h"
 #include "roo_monitoring/common.h"
 #include "roo_monitoring/log.h"
 #include "roo_monitoring/resolution.h"
@@ -19,8 +19,10 @@ namespace roo_monitoring {
 // timeseries that will usually be plotted together.
 class Collection {
  public:
-  Collection(String name, Resolution resolution = kResolution_1024_ms);
+  Collection(roo_io::Filesystem& fs, String name,
+             Resolution resolution = kResolution_1024_ms);
 
+  roo_io::Filesystem& fs() const { return fs_; }
   const String& name() const { return name_; }
   Resolution resolution() const { return resolution_; }
   const Transform& transform() const { return transform_; }
@@ -31,6 +33,7 @@ class Collection {
   friend class Writer;
   friend class WriteTransaction;
 
+  roo_io::Filesystem& fs_;
   String name_;
   String base_dir_;
   Resolution resolution_;
@@ -66,7 +69,7 @@ class Writer {
   friend class WriteTransaction;
 
   // Returns the index past written to the vault.
-  int16_t writeToVault(LogReader& reader, VaultFileRef ref);
+  int16_t writeToVault(roo_io::Mount& fs, LogReader& reader, VaultFileRef ref);
 
   Status compactVaultOneLevel();
 

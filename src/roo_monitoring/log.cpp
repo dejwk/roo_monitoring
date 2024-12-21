@@ -5,31 +5,40 @@
 #include <algorithm>
 
 #include "common.h"
-#include "datastream.h"
+#include "roo_io/fs/fsutil.h"
 #include "roo_logging.h"
+
+#ifndef MLOG_roo_monitoring_compaction
+#define MLOG_roo_monitoring_compaction 0
+#endif
+
+#ifndef MLOG_roo_logging_writer
+#define MLOG_roo_logging_writer 0
+#endif
 
 namespace roo_monitoring {
 
 enum Code { CODE_ERROR = 0, CODE_TIMESTAMP = 1, CODE_DATUM = 2 };
 
 bool LogFileReader::open(const char* path, int64_t checkpoint) {
-  is_.close();
-  LOG(INFO) << "Opening log file " << path << " at " << checkpoint;
-  is_.open(path, std::ios_base::in);
-  if (!is_.good()) {
+  MLOG(roo_monitoring_compaction)
+      << "Opening log file " << path << " at " << checkpoint;
+  reader_.reset(fs_.fopen(path));
+  if (!reader_.isOpen()) {
     LOG(ERROR) << "Failed to open log file " << path << ": "
-               << strerror(is_.my_errno());
+               << roo_io::StatusAsString(reader_.status());
     return false;
   }
   if (checkpoint > 0) {
-    is_.seekg(checkpoint);
-    if (!is_.good()) {
+    reader_.seek(checkpoint);
+    if (!reader_.ok()) {
       LOG(ERROR) << "Failed to seek in the log file " << path << ": "
-                 << strerror(is_.my_errno());
+                 << roo_io::StatusAsString(reader_.status());
       return false;
     }
   }
   checkpoint_ = checkpoint;
+  lookahead_entry_type_ = reader_.readU8();
   return true;
 }
 
@@ -37,47 +46,51 @@ bool LogFileReader::next(int64_t* timestamp, std::vector<LogSample>* data,
                          bool is_hot) {
   data->clear();
   if (checkpoint_ < 0) return false;
-  int next = is_.peek_uint8();
-  if (!is_.good()) return false;
-  if (next != CODE_TIMESTAMP) {
-    LOG(ERROR) << "Unexpected content in the log file: " << next;
+  if (!reader_.ok()) return false;
+  if (lookahead_entry_type_ != CODE_TIMESTAMP) {
+    LOG(ERROR) << "Unexpected content in the log file: "
+               << (int)lookahead_entry_type_;
     return false;
   }
-  is_.read_uint8();
-  *timestamp = is_.read_varint();
-  if (is_.bad()) return false;
+  *timestamp = reader_.readVarU64();
+  lookahead_entry_type_ = reader_.readU8();
+  if (!reader_.ok()) return false;
 
   // LOG(INFO) << "Read log data at timestamp: " << roo_logging::hex <<
   // *timestamp;
   while (true) {
-    int next = is_.peek_uint8();
-    if (is_.eof()) {
+    if (reader_.status() == roo_io::kEndOfStream) {
       if (is_hot) {
         // Indicate that the data isn't complete yet. Not updating the
         // source checkpoint in this case.
         return false;
       } else {
         // Indicating that we have reached the end of a 'historical' log file.
-        LOG(INFO) << "Reached EOF of a historical log file ";
+        MLOG(roo_monitoring_compaction)
+            << "Reached EOF of a historical log file ";
         checkpoint_ = -1;
         break;
       }
-    } else if (!is_.good()) {
+    } else if (!reader_.ok()) {
       // Must be I/O error.
       LOG(ERROR) << "Failed to read timestamped data from a log file: "
-                 << strerror(is_.my_errno());
+                 << roo_io::StatusAsString(reader_.status());
       return false;
-    } else if (next == CODE_DATUM) {
+    } else if (lookahead_entry_type_ == CODE_DATUM) {
       uint64_t stream_id;
       uint16_t datum;
-      is_.read_uint8();
-      stream_id = is_.read_varint();
-      datum = is_.read_uint16();
-      if (is_.bad()) return false;
+      stream_id = reader_.readVarU64();
+      datum = reader_.readBeU16();
+      if (!reader_.ok()) return false;
       data->emplace_back(stream_id, datum);
-    } else if (next == CODE_TIMESTAMP) {
-      checkpoint_ = (int64_t)is_.tellg();
+      lookahead_entry_type_ = reader_.readU8();
+      continue;
+    } else if (lookahead_entry_type_ == CODE_TIMESTAMP) {
+      checkpoint_ = (int64_t)reader_.position() - 1;
       break;
+    } else {
+      LOG(ERROR) << "Unexpected entry type " << (int)lookahead_entry_type_;
+      return false;
     }
   }
   std::sort(data->begin(), data->end());
@@ -97,16 +110,20 @@ std::vector<int64_t> CachedLogDir::list() {
 void CachedLogDir::sync() {
   if (synced_) return;
   entries_.clear();
-  std::vector<int64_t> entries = listFiles(log_dir_);
+  roo_io::Mount fs = fs_.mount();
+  if (!fs.ok()) return;
+  std::vector<int64_t> entries = listFiles(fs, log_dir_);
   for (int64_t e : entries) {
     entries_.insert(e);
   }
   synced_ = true;
 }
 
-LogReader::LogReader(const char* log_dir, CachedLogDir& cache,
-                     Resolution resolution, int64_t hot_file)
-    : log_dir_(log_dir),
+LogReader::LogReader(roo_io::Mount& fs, const char* log_dir,
+                     CachedLogDir& cache, Resolution resolution,
+                     int64_t hot_file)
+    : fs_(fs),
+      log_dir_(log_dir),
       cache_(cache),
       resolution_(resolution),
       entries_(cache_.list()),
@@ -119,7 +136,7 @@ LogReader::LogReader(const char* log_dir, CachedLogDir& cache,
       reached_hot_file_(false),
       range_floor_(0),
       range_ceil_(0),
-      reader_() {
+      reader_(fs) {
   // Ensure that the hot file is at the end of the list, even if it is not, for
   // some reason, chronologically the newest. This way, we will always delete
   // the non-hot logs and leave the hot file be.
@@ -127,7 +144,7 @@ LogReader::LogReader(const char* log_dir, CachedLogDir& cache,
 
 bool LogReader::nextRange() {
   if (group_end_ == entries_.end() || reached_hot_file_) {
-    LOG(INFO) << "No more log files to process.";
+    MLOG(roo_monitoring_compaction) << "No more log files to process.";
     return false;
   }
   cursor_ = group_begin_ = group_end_;
@@ -141,8 +158,9 @@ bool LogReader::nextRange() {
     }
     ++group_end_;
   }
-  LOG(INFO) << "Processing log files for the range starting at "
-            << roo_logging::hex << *group_begin_;
+  MLOG(roo_monitoring_compaction)
+      << "Processing log files for the range starting at " << roo_logging::hex
+      << *group_begin_;
   return true;
 }
 
@@ -170,12 +188,14 @@ bool LogReader::nextSample(int64_t* timestamp, std::vector<LogSample>* data) {
 bool LogReader::seek(LogCursor cursor) {
   auto i = std::lower_bound(group_begin_, group_end_, cursor.file());
   if (i == group_end_ || *i != cursor.file()) {
-    LOG(WARNING) << "Seek failed; file not found: " << cursor.file();
+    LOG(WARNING) << "Seek failed; file not found: " << roo_logging::hex
+                 << cursor.file();
     return false;
   }
   if (!reader_.open(filepath(log_dir_, cursor.file()).c_str(),
                     cursor.position())) {
-    LOG(WARNING) << "Seek failed; could not open: " << cursor.file();
+    LOG(WARNING) << "Seek failed; could not open: " << roo_logging::hex
+                 << cursor.file();
     return false;
   }
   cursor_ = i;
@@ -190,8 +210,9 @@ LogCursor LogReader::tell() {
 void LogReader::deleteRange() {
   CHECK(!isHotRange());
   for (auto i = group_begin_; i != group_end_; ++i) {
-    LOG(INFO) << "Removing processed log file " << roo_logging::hex << *i;
-    if (remove(filepath(log_dir_, *i).c_str()) != 0) {
+    MLOG(roo_monitoring_compaction)
+        << "Removing processed log file " << roo_logging::hex << *i;
+    if (fs_.remove(filepath(log_dir_, *i).c_str()) != roo_io::kOk) {
       LOG(ERROR) << "Failed to remove processed log file " << roo_logging::hex
                  << *i;
     }
@@ -199,39 +220,46 @@ void LogReader::deleteRange() {
   }
 }
 
-LogWriter::LogWriter(const char* log_dir, CachedLogDir& cache,
-                     Resolution resolution)
+LogWriter::LogWriter(roo_io::Filesystem& fs, const char* log_dir,
+                     CachedLogDir& cache, Resolution resolution)
     : log_dir_(log_dir),
       cache_(cache),
       resolution_(resolution),
+      fs_(fs),
+      mount_(),
       first_timestamp_(-1),
       last_timestamp_(-1),
       range_ceil_(-1) {}
 
-void writeTimestamp(DataOutputStream& os, int64_t timestamp) {
-  os.write_uint8(CODE_TIMESTAMP);
-  os.write_varint(timestamp);
+void writeTimestamp(roo_io::OutputStreamWriter& writer, int64_t timestamp) {
+  writer.writeU8(CODE_TIMESTAMP);
+  writer.writeVarU64(timestamp);
 }
 
-void writeDatum(DataOutputStream& os, uint64_t stream_id,
+void writeDatum(roo_io::OutputStreamWriter& writer, uint64_t stream_id,
                 uint16_t transformed_datum) {
-  os.write_uint8(CODE_DATUM);
-  os.write_varint(stream_id);
-  os.write_uint16(transformed_datum);
+  writer.writeU8(CODE_DATUM);
+  writer.writeVarU64(stream_id);
+  writer.writeBeU16(transformed_datum);
   // write_float(file, datum);
 }
 
-void LogWriter::open(std::ios_base::openmode mode) {
+void LogWriter::open(roo_io::FileUpdatePolicy update_policy) {
   String path = log_dir_;
   path += "/";
   path += Filename::forTimestamp(first_timestamp_).filename();
-  if (!recursiveMkDir(path.c_str())) return;
+  mount_ = fs_.mount();
+  roo_io::Status status = roo_io::MkParentDirRecursively(mount_, path.c_str());
+  if (status != roo_io::kOk && status != roo_io::kDirectoryExists) return;
   //   last_log_file_path_ = path;
-  os_.open(path.c_str(), mode);
+  writer_.reset(mount_.fopenForWrite(path.c_str(), update_policy));
   cache_.insert(first_timestamp_);
 }
 
-void LogWriter::close() { os_.close(); }
+void LogWriter::close() {
+  writer_.close();
+  mount_.close();
+}
 
 bool LogWriter::can_skip_write(int64_t timestamp, uint64_t stream_id) {
   return timestamp == last_timestamp_ &&
@@ -252,21 +280,21 @@ void LogWriter::write(int64_t timestamp, uint64_t stream_id, uint16_t datum) {
     first_timestamp_ = timestamp;
     range_ceil_ = timestamp_ms_ceil(timestamp, range_resolution);
     streams_.clear();
-    open(std::ios_base::out);
+    open(roo_io::kFailIfExists);
   } else {
-    if (!os_.is_open()) {
-      open(std::ios_base::app);
+    if (!writer_.ok()) {
+      open(roo_io::kAppendIfExists);
     }
   }
 
   if (timestamp != last_timestamp_) {
     last_timestamp_ = timestamp;
     streams_.clear();
-    writeTimestamp(os_, timestamp);
+    writeTimestamp(writer_, timestamp);
   }
   if (streams_.insert(stream_id).second) {
     // Did not exist.
-    writeDatum(os_, stream_id, datum);
+    writeDatum(writer_, stream_id, datum);
   }
 }
 

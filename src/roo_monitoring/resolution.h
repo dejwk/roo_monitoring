@@ -1,5 +1,7 @@
 #pragma once
 
+#include <inttypes.h>
+
 namespace roo_monitoring {
 
 enum Resolution {

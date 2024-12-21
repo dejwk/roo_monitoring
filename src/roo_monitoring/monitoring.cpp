@@ -3,8 +3,10 @@
 
 #include "common.h"
 #include "compaction.h"
-#include "datastream.h"
 #include "log.h"
+#include "roo_io/data/input_stream_reader.h"
+#include "roo_io/data/output_stream_writer.h"
+#include "roo_io/fs/fsutil.h"
 #include "roo_logging.h"
 #include "roo_monitoring.h"
 
@@ -12,17 +14,23 @@
 const char* GetVfsRoot();
 #endif
 
+#ifndef MLOG_roo_monitoring_compaction
+#define MLOG_roo_monitoring_compaction 0
+#endif
+
+#ifndef MLOG_roo_monitoring_vault_reader
+#define MLOG_roo_monitoring_vault_reader 0
+#endif
+
 namespace roo_monitoring {
 
-Collection::Collection(String name, Resolution resolution)
-    : name_(name),
+Collection::Collection(roo_io::Filesystem& fs, String name,
+                       Resolution resolution)
+    : fs_(fs),
+      name_(name),
       resolution_(resolution),
       transform_(Transform::Linear(256, 0x8000)) {
-  base_dir_ = "";
-#ifdef ROO_TESTING
-  base_dir_ += GetVfsRoot();
-#endif
-  base_dir_ += kMonitoringBasePath;
+  base_dir_ = kMonitoringBasePath;
   base_dir_ += "/";
   base_dir_ += name;
 }
@@ -30,8 +38,9 @@ Collection::Collection(String name, Resolution resolution)
 Writer::Writer(Collection* collection)
     : collection_(collection),
       log_dir_(subdir(collection->base_dir_, kLogSubPath)),
-      cache_(log_dir_.c_str()),
-      writer_(log_dir_.c_str(), cache_, collection->resolution()),
+      cache_(collection->fs(), log_dir_.c_str()),
+      writer_(collection->fs(), log_dir_.c_str(), cache_,
+              collection->resolution()),
       io_state_(Writer::IOSTATE_OK) {}
 
 WriteTransaction::WriteTransaction(Writer* writer)
@@ -78,54 +87,60 @@ String getLogCompactionCursorPath(const Collection* collection,
   return cursor_file_path;
 }
 
-bool tryReadLogCompactionCursor(const char* cursor_path,
-                                LogCompactionCursor* result) {
-  DataInputStream cursor_file(cursor_path, std::ios_base::in);
-  if (!cursor_file.is_open()) {
-    if (errno == ENOENT) {
-      errno = 0;
-    } else {
+roo_io::Status tryReadLogCompactionCursor(roo_io::Mount& fs,
+                                          const char* cursor_path,
+                                          LogCompactionCursor* result) {
+  auto reader = roo_io::OpenDataFile(fs, cursor_path);
+  if (!reader.ok()) {
+    if (reader.status() != roo_io::kNotFound) {
       LOG(ERROR) << "Failed to open cursor file " << cursor_path << ": "
-                 << strerror(errno);
+                 << roo_io::StatusAsString(reader.status());
     }
-    return false;
+    return reader.status();
   }
   // Maybe can append.
-  uint8_t target_datum_index = cursor_file.read_uint8();
-  uint64_t source_file = cursor_file.read_varint();
-  uint64_t source_checkpoint = cursor_file.read_varint();
-  if (!cursor_file.good()) {
+  uint8_t target_datum_index = reader.readU8();
+  uint64_t source_file = reader.readVarU64();
+  uint64_t source_checkpoint = reader.readVarU64();
+  if (!reader.ok()) {
     LOG(ERROR) << "Error reading data from the cursor file: "
-               << cursor_file.status() << ". Will ignore the cursor.";
-    return false;
+               << roo_io::StatusAsString(reader.status())
+               << ". Will ignore the cursor.";
+    return reader.status();
   }
   *result = LogCompactionCursor(LogCursor(source_file, source_checkpoint),
                                 target_datum_index);
-  LOG(INFO) << "Successfully read the cursor content " << cursor_path << ": "
-            << roo_logging::hex << source_file << roo_logging::dec << ", "
-            << source_checkpoint << ", " << (int)target_datum_index;
-  return true;
+  MLOG(roo_monitoring_compaction)
+      << "Successfully read the cursor content " << cursor_path << ": "
+      << roo_logging::hex << source_file << roo_logging::dec << ", "
+      << source_checkpoint << ", " << (int)target_datum_index;
+  return roo_io::kOk;
 }
 
-bool writeCursor(const char* cursor_path, const LogCompactionCursor cursor) {
-  DataOutputStream cursor_file(cursor_path, std::ios_base::out);
-  if (cursor_file.is_open()) {
-    LOG(INFO) << "Writing cursor content " << cursor_path << ": "
-              << roo_logging::hex << cursor.log_cursor().file()
-              << roo_logging::dec << ", " << cursor.log_cursor().position()
-              << ", " << (int)cursor.target_datum_index();
-
-    cursor_file.write_uint8(cursor.target_datum_index());
-    cursor_file.write_varint(cursor.log_cursor().file());
-    CHECK_GE(cursor.log_cursor().position(), 0);
-    cursor_file.write_varint(cursor.log_cursor().position());
-    cursor_file.close();
+bool writeCursor(roo_io::Mount& fs, const char* cursor_path,
+                 const LogCompactionCursor cursor) {
+  auto writer = OpenDataFileForWrite(fs, cursor_path, roo_io::kFailIfExists);
+  if (!writer.ok()) {
+    LOG(ERROR) << "Error opening the cursor file " << cursor_path
+               << "for write: " << roo_io::StatusAsString(writer.status());
   }
-  if (!cursor_file.good()) {
+  MLOG(roo_monitoring_compaction)
+      << "Writing cursor content " << cursor_path << ": " << roo_logging::hex
+      << cursor.log_cursor().file() << roo_logging::dec << ", "
+      << cursor.log_cursor().position() << ", "
+      << (int)cursor.target_datum_index();
+
+  writer.writeU8(cursor.target_datum_index());
+  writer.writeVarU64(cursor.log_cursor().file());
+  CHECK_GE(cursor.log_cursor().position(), 0);
+  writer.writeVarU64(cursor.log_cursor().position());
+  writer.close();
+  if (writer.status() != roo_io::kClosed) {
     LOG(ERROR) << "Error writing to the cursor file " << cursor_path << ": "
                << strerror(errno);
+    return false;
   }
-  return cursor_file.good();
+  return true;
 }
 
 }  // namespace
@@ -167,69 +182,79 @@ void Writer::flushAll() {
 }
 
 void Writer::flushSome() {
+  roo_io::Mount fs = collection_->fs().mount();
+  if (!fs.ok()) return;
   if (flush_in_progress_) {
     Status status = compactVaultOneLevel();
     if (status == Writer::OK) {
       flush_in_progress_ = false;
       // We're done compacting. Check if there is more to read?
-      LogReader reader(log_dir_.c_str(), cache_, collection_->resolution(),
-                      writer_.first_timestamp());
+      LogReader reader(fs, log_dir_.c_str(), cache_, collection_->resolution(),
+                       writer_.first_timestamp());
       if (reader.nextRange() && !reader.isHotRange()) {
         // Has some historic range; let's continue compacting.
-        compaction_head_ =
-            VaultFileRef::Lookup(reader.range_floor(), collection_->resolution());
-        compaction_head_index_end_ = writeToVault(reader, compaction_head_);
+        compaction_head_ = VaultFileRef::Lookup(reader.range_floor(),
+                                                collection_->resolution());
+        compaction_head_index_end_ = writeToVault(fs, reader, compaction_head_);
         is_hot_range_ = reader.isHotRange();
         if (io_state() != IOSTATE_OK) return;
         flush_in_progress_ = true;
       }
     } else if (status == Writer::FAILED) {
       LOG(ERROR) << "Vault compaction failed at resolution "
-                << compaction_head_.resolution();
+                 << compaction_head_.resolution();
       io_state_ = IOSTATE_ERROR;
       flush_in_progress_ = false;
     }
   } else {
     // flush not in progress.
-    LogReader reader(log_dir_.c_str(), cache_, collection_->resolution(),
-                    writer_.first_timestamp());
+    LogReader reader(fs, log_dir_.c_str(), cache_, collection_->resolution(),
+                     writer_.first_timestamp());
     if (reader.nextRange()) {
       compaction_head_ =
           VaultFileRef::Lookup(reader.range_floor(), collection_->resolution());
-      compaction_head_index_end_ = writeToVault(reader, compaction_head_);
+      compaction_head_index_end_ = writeToVault(fs, reader, compaction_head_);
       is_hot_range_ = reader.isHotRange();
       if (io_state() != IOSTATE_OK) return;
       flush_in_progress_ = true;
-      LOG(INFO) << "Starting vault compaction.";
+      MLOG(roo_monitoring_compaction) << "Starting vault compaction.";
     }
   }
 }
 
-int16_t Writer::writeToVault(LogReader& reader, VaultFileRef ref) {
+int16_t Writer::writeToVault(roo_io::Mount& fs, LogReader& reader,
+                             VaultFileRef ref) {
   VaultWriter writer(collection_, ref);
 
   // See if we can use cursor.
   String cursor_path = getLogCompactionCursorPath(collection_, ref);
   LogCompactionCursor cursor;
-  if (tryReadLogCompactionCursor(cursor_path.c_str(), &cursor) &&
-      reader.seek(cursor.log_cursor())) {
-    writer.openExisting(cursor.target_datum_index());
-    if (!writer.good()) {
-      io_state_ = IOSTATE_ERROR;
-      return -1;
+  roo_io::Status status;
+  bool opened = false;
+  status = tryReadLogCompactionCursor(fs, cursor_path.c_str(), &cursor);
+  if (status == roo_io::kOk) {
+    if (reader.seek(cursor.log_cursor())) {
+      writer.openExisting(cursor.target_datum_index());
+      if (writer.ok()) {
+        opened = true;
+      }
+      if (fs.remove(cursor_path.c_str()) != roo_io::kOk) {
+        io_state_ = IOSTATE_ERROR;
+        return -1;
+      }
     }
-  } else {
-    if (errno != 0) {
-      io_state_ = IOSTATE_ERROR;
-      return -1;
-    }
+  }
+  if (status != roo_io::kNotFound) {
+    fs.remove(cursor_path.c_str());
+  }
+  if (!opened) {
+    // Cursor not found.
     writer.openNew();
-    if (!writer.good()) {
+    if (!writer.ok()) {
       io_state_ = IOSTATE_ERROR;
       return -1;
     }
   }
-  remove(cursor_path.c_str());
 
   // In any case, now just iterate and compact.
   int64_t increment = timestamp_increment(1, collection_->resolution());
@@ -251,14 +276,14 @@ int16_t Writer::writeToVault(LogReader& reader, VaultFileRef ref) {
     writer.writeLogData(data);
     current += increment;
   }
-  if (!writer.good()) {
+  if (!writer.ok()) {
     io_state_ = IOSTATE_ERROR;
     return -1;
   }
 
   if (reader.isHotRange()) {
     if (!writeCursor(
-            cursor_path.c_str(),
+            fs, cursor_path.c_str(),
             LogCompactionCursor(reader.tell(), writer.write_index()))) {
       io_state_ = IOSTATE_ERROR;
       return -1;
@@ -277,16 +302,18 @@ int16_t Writer::writeToVault(LogReader& reader, VaultFileRef ref) {
 }
 
 Writer::Status Writer::compactVaultOneLevel() {
+  roo_io::Mount fs = collection_->fs().mount();
+  if (!fs.ok()) return Writer::FAILED;
   VaultFileRef parent = compaction_head_.parent();
   compaction_head_index_end_ =
       64 * compaction_head_.sibling_index() + (compaction_head_index_end_ >> 2);
   compaction_head_ = parent;
   if (compaction_head_.resolution() > kMaxResolution) {
-    LOG(INFO) << "Vault compacton finished.";
+    MLOG(roo_monitoring_compaction) << "Vault compacton finished.";
     return Writer::OK;
   }
   if (compaction_head_index_end_ == 0) {
-    LOG(INFO) << "Compaction index = 0";
+    MLOG(roo_monitoring_compaction) << "Compaction index = 0";
     // We're definitely done compacting.
     return Writer::OK;
   }
@@ -296,25 +323,40 @@ Writer::Status Writer::compactVaultOneLevel() {
 
   VaultWriter writer(collection_, compaction_head_);
   VaultFileReader reader(collection_);
-  LOG(INFO) << "Compacting " << roo_logging::hex << writer.vault_ref()
-            << ", with end index " << roo_logging::dec
-            << compaction_head_index_end_;
+  MLOG(roo_monitoring_compaction)
+      << "Compacting " << roo_logging::hex << writer.vault_ref()
+      << ", with end index " << roo_logging::dec << compaction_head_index_end_;
 
   // See if we can use a cursor file.
   String cursor_path =
       getLogCompactionCursorPath(collection_, compaction_head_);
+  bool opened = false;
   LogCompactionCursor cursor;
-  if (tryReadLogCompactionCursor(cursor_path.c_str(), &cursor) &&
-      reader.open(compaction_head_.child(cursor.target_datum_index() / 64),
-                  (cursor.target_datum_index() % 64) << 2,
-                  cursor.log_cursor().position())) {
-    writer.openExisting(cursor.target_datum_index());
-  } else {
+  roo_io::Status status =
+      tryReadLogCompactionCursor(fs, cursor_path.c_str(), &cursor);
+  if (status == roo_io::kOk) {
+    reader.open(compaction_head_.child(cursor.target_datum_index() / 64),
+                (cursor.target_datum_index() % 64) << 2,
+                cursor.log_cursor().position());
+    if (reader.ok()) {
+      writer.openExisting(cursor.target_datum_index());
+      if (writer.ok()) {
+        opened = true;
+      }
+      roo_io::Status cursor_status = fs.remove(cursor_path.c_str());
+      if (cursor_status != roo_io::kOk) {
+        LOG(ERROR) << "Failed to delete cursor file " << cursor_path << ": "
+                   << roo_io::StatusAsString(cursor_status);
+        return Writer::FAILED;
+      }
+    }
+  } else if (status != roo_io::kNotFound) {
+    fs.remove(cursor_path.c_str());
+  }
+  if (!opened) {
     reader.open(compaction_head_.child(0), 0, 0);
     writer.openNew();
   }
-  remove(cursor_path.c_str());
-
   if (writer.write_index() >= compaction_head_index_end_) {
     // The vault already has data past the current index. We will not be
     // overwriting it. Nothing more to do.
@@ -327,6 +369,7 @@ Writer::Status Writer::compactVaultOneLevel() {
   do {
     CHECK_LE(reader.index(), 252);
     for (int i = 0; i < 4; ++i) {
+      // Ignore missing input files when compacting.
       reader.next(&sample_group);
       for (const Sample& sample : sample_group) {
         if (sample.fill() > 0) {
@@ -342,22 +385,24 @@ Writer::Status Writer::compactVaultOneLevel() {
   } while (writer.write_index() < compaction_head_index_end_);
   if (writer.write_index() > 0 && writer.write_index() < 256) {
     // The vault file is unfinished; create a write cursor for it.
-    writeCursor(cursor_path.c_str(),
+    writeCursor(fs, cursor_path.c_str(),
                 LogCompactionCursor(reader.tell(), writer.write_index()));
   }
   reader.close();
   writer.close();
-  if (!reader.good()) {
-    LOG(ERROR) << "Failed to process the input vault file: " << reader.status();
+  if (reader.status() != roo_io::kClosed) {
+    LOG(ERROR) << "Failed to process the input vault file: "
+               << roo_io::StatusAsString(reader.status());
     return Writer::FAILED;
   }
-  if (!writer.good()) {
+  if (writer.status() != roo_io::kClosed) {
     LOG(ERROR) << "Failed to process the output vault file: "
-               << writer.status();
+               << roo_io::StatusAsString(writer.status());
     return Writer::FAILED;
   }
-  LOG(INFO) << "Finished compacting " << roo_logging::hex << writer.vault_ref()
-            << ", with end index " << roo_logging::dec << writer.write_index();
+  MLOG(roo_monitoring_compaction)
+      << "Finished compacting " << roo_logging::hex << writer.vault_ref()
+      << ", with end index " << roo_logging::dec << writer.write_index();
   return Writer::IN_PROGRESS;
 }
 
@@ -399,8 +444,9 @@ VaultIterator::VaultIterator(const Collection* collection, int64_t start,
 void VaultIterator::next(std::vector<Sample>* sample) {
   if (current_.past_eof()) {
     current_ref_ = current_ref_.next();
-    LOG(INFO) << "Advancing to next file: " << roo_logging::hex
-              << current_ref_.timestamp();
+    MLOG(roo_monitoring_vault_reader)
+        << "Advancing to next file: " << roo_logging::hex
+        << current_ref_.timestamp();
     current_.open(current_ref_, 0, 0);
   }
   current_.next(sample);

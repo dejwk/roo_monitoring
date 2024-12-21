@@ -1,13 +1,12 @@
 #pragma once
 
-#include "roo_monitoring.h"
+#include <map>
+#include <memory>
 
 #include "log.h"
+#include "roo_io/data/output_stream_writer.h"
+#include "roo_monitoring.h"
 #include "stdint.h"
-
-#include "datastream.h"
-
-#include <map>
 
 namespace roo_monitoring {
 
@@ -38,11 +37,11 @@ class VaultWriter {
   VaultWriter(Collection* collection, VaultFileRef ref);
   const VaultFileRef& vault_ref() const { return ref_; }
 
-  std::ios_base::io_state openNew();
+  roo_io::Status openNew();
 
-  std::ios_base::io_state openExisting(int write_index);
+  roo_io::Status openExisting(int write_index);
 
-  void close() { os_.close(); }
+  void close() { writer_.close(); }
 
   int write_index() const { return write_index_; }
 
@@ -51,10 +50,9 @@ class VaultWriter {
   void writeLogData(const std::vector<LogSample>& data);
   void writeAggregatedData(const Aggregator& aggregator);
 
-  bool good() const { return os_.good(); }
-  int my_errno() const { return os_.my_errno(); }
+  bool ok() const { return writer_.ok(); }
 
-  const char* status() { return os_.status(); }
+  roo_io::Status status() const { return writer_.status(); }
 
  private:
   void writeHeader();
@@ -62,7 +60,7 @@ class VaultWriter {
   const Collection* collection_;
   VaultFileRef ref_;
   int write_index_;
-  DataOutputStream os_;
+  roo_io::OutputStreamWriter writer_;
 };
 
 }  // namespace roo_monitoring

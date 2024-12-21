@@ -3,11 +3,10 @@
 #include <ostream>
 
 #include "common.h"
-#include "datastream.h"
 #include "log.h"  // for LogCursor.
-#include "sample.h"
-
+#include "roo_io/data/multipass_input_stream_reader.h"
 #include "roo_logging.h"
+#include "sample.h"
 
 namespace roo_monitoring {
 
@@ -100,10 +99,9 @@ class VaultFileReader {
   // VaultFileReader& operator=(VaultFileReader&& other);
 
   bool open(const VaultFileRef& ref, int index, int64_t offset);
-  bool is_open() const { return file_.is_open(); }
-  void close() {
-    if (file_.is_open()) file_.close();
-  }
+  bool is_open() const { return reader_.isOpen(); }
+
+  void close() { reader_.close(); }
 
   void seekForward(int64_t timestamp);
   bool next(std::vector<Sample>* sample);
@@ -114,13 +112,12 @@ class VaultFileReader {
   // existed, we consider it 'good'. If open fails for any other reason than
   // 'does not exist', or if read fails for any reason, my_errno() will
   // return a non-zero value.
-  bool good() const { return my_errno() == 0; }
-  int my_errno() const {
-    int result = file_.my_errno();
-    return (result == ENOENT ? 0 : result);
+  bool ok() const {
+    return reader_.status() == roo_io::kOk ||
+           reader_.status() == roo_io::kNotFound;
   }
 
-  const char* status() { return strerror(my_errno()); }
+  roo_io::Status status() const { return reader_.status(); }
 
   const VaultFileRef& vault_ref() const { return ref_; }
 
@@ -131,7 +128,8 @@ class VaultFileReader {
  private:
   const Collection* collection_;
   VaultFileRef ref_;
-  DataInputStream file_;
+  roo_io::Mount fs_;
+  roo_io::MultipassInputStreamReader reader_;
   int index_;
   int position_;
 };

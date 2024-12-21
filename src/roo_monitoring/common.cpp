@@ -1,8 +1,5 @@
 #include "common.h"
 
-#include <dirent.h>
-#include <stdio.h>
-#include <sys/stat.h>
 #include <algorithm>
 #include <memory>
 
@@ -10,55 +7,8 @@
 
 namespace roo_monitoring {
 
-const char* kMonitoringBasePath = "/sd/monitoring";
+const char* kMonitoringBasePath = "/monitoring";
 const char* kLogSubPath = "log";
-
-bool isdir(const char* path) {
-  struct stat s;
-  if (stat(path, &s) == 0) {
-    return (s.st_mode & S_IFDIR);
-  } else {
-    return false;
-  }
-}
-
-namespace {
-
-bool doMkDir(const char* path) {
-  int result = mkdir(path, S_IRWXU);
-  if (result == 0) {
-    LOG(INFO) << "Directory " << path << " created.";
-    return true;
-  }
-  if (errno == EEXIST) {
-    errno = 0;
-    // LOG(INFO) << "Directory " << path << " not created, because it exists.";
-  } else {
-    LOG(ERROR) << "Failed to create directory " << path << ": "
-               << strerror(errno);
-    return false;
-  }
-  return true;
-}
-
-}  // namespace
-
-bool recursiveMkDir(const char* path) {
-  size_t len = strlen(path);
-  std::unique_ptr<char[]> tmp(new char[len + 1]);
-  memcpy(tmp.get(), path, len + 1);
-  for (char* p = tmp.get() + 1; *p; p++)
-    if (*p == '/') {
-      *p = 0;
-      if (!doMkDir(tmp.get())) return false;
-      *p = '/';
-    }
-  if (tmp[len - 1] == '/') {
-    tmp[len - 1] = 0;
-    if (!doMkDir(tmp.get())) return false;
-  }
-  return true;
-}
 
 String subdir(String base, const String& sub) {
   base += '/';
@@ -92,29 +42,27 @@ static int64_t decodeHex(const char* filename) {
 
 }  // namespace
 
-std::vector<int64_t> listFiles(const char* dirname) {
+std::vector<int64_t> listFiles(roo_io::Mount& fs, const char* dirname) {
   std::vector<int64_t> result;
-
-  DIR* dir = opendir(dirname);
-  if (dir == nullptr) {
+  roo_io::Directory dir = fs.opendir(dirname);
+  if (!dir.isOpen()) {
     LOG(WARNING) << "Failed to open directory " << dirname << ": "
-                 << strerror(errno);
+                 << roo_io::StatusAsString(dir.status());
     return result;
   }
-  struct dirent* ent;
-  while ((ent = readdir(dir)) != nullptr) {
-    if (ent->d_type == DT_DIR) {
+  while (dir.read()) {
+    if (dir.entry().isDirectory()) {
       // Skip "." and ".."
       continue;
     }
-    if (strlen(ent->d_name) != 12) {
+    if (strlen(dir.entry().name()) != 12) {
       // Skip .cursor files, and other auxiliary files.
       continue;
     }
-    result.push_back(decodeHex(ent->d_name));
+    result.push_back(decodeHex(dir.entry().name()));
   }
   std::sort(result.begin(), result.end());
-  closedir(dir);
+  dir.close();
   return result;
 }
 
