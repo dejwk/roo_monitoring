@@ -1,0 +1,38 @@
+{
+    "name": "roo_monitoring",
+    "description": "Arduino library for collecting monitoring metrics.",
+    "keywords": [
+        "monitoring",
+        "metrics",
+        "timeseries",
+        "logging"
+    ],
+    "authors": [
+        {
+            "name": "Dejwk",
+            "email": "dejwk.oss@gmail.com",
+            "maintainer": true
+        }
+    ],
+    "repository": {
+        "type": "git",
+        "url": "https://github.com/dejwk/roo_monitoring"
+    },
+    "version": "1.0.0",
+    "homepage": "https://github.com/dejwk/roo_monitoring",
+    "frameworks": [
+        "*"
+    ],
+    "build": {
+        "srcDir": "src",
+        "srcFilter": "+<*> -<examples> -<benchmarks> -<doc> -<test>"
+    },
+    "examples": [
+        "examples/**/*.ino"
+    ],
+    "dependencies": {
+        "dejwk/roo_collections": ">=1.4.1",
+        "dejwk/roo_io": ">=2.1.4",
+        "dejwk/roo_logging": ">=1.5.3"
+    }
+}
