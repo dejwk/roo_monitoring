@@ -1,8 +1,8 @@
 common --registry="https://raw.githubusercontent.com/dejwk/roo-registry/main/" --registry="https://bcr.bazel.build"
 
 # GCC 13 libstdc++ regex triggers false-positive maybe-uninitialized warnings in glog.
-build --per_file_copt=external/glog\+/.*@-Wno-maybe-uninitialized
-build --per_file_copt=external/glog\+/.*@-Wno-uninitialized
+common --per_file_copt=external/glog\+/.*@-Wno-maybe-uninitialized
+common --per_file_copt=external/glog\+/.*@-Wno-uninitialized
 
 build:asan --strip=never
 build:asan --copt -fsanitize=address
