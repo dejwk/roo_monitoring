@@ -31,7 +31,8 @@ enum Resolution {
 static const Resolution kMaxResolution = kResolution_68719476736_ms;
 
 /// Rounds the timestamp down to the specified resolution bucket.
-static int64_t timestamp_ms_floor(int64_t timestamp_ms, Resolution resolution) {
+inline constexpr static int64_t timestamp_ms_floor(int64_t timestamp_ms,
+                                                   Resolution resolution) {
   // Resolution is the exponent with base 4, so we need to multiply
   // by 2 when converting to base 2. Then, using shift to generate
   // the required number of zeros in the mask.
@@ -39,14 +40,16 @@ static int64_t timestamp_ms_floor(int64_t timestamp_ms, Resolution resolution) {
 }
 
 /// Rounds the timestamp up to the specified resolution bucket.
-static int64_t timestamp_ms_ceil(int64_t timestamp_ms, Resolution resolution) {
+inline constexpr static int64_t timestamp_ms_ceil(int64_t timestamp_ms,
+                                                  Resolution resolution) {
   // Like the above, but mask is negated (so it has the requested count
   // of trailing 1s) and ORed with the timestamp.
   return timestamp_ms | ~(0xFFFFFFFFFFFFFFFFLL << (resolution << 1));
 }
 
 /// Returns the timestamp delta for the given number of resolution steps.
-static int64_t timestamp_increment(int64_t steps, Resolution resolution) {
+inline constexpr static int64_t timestamp_increment(int64_t steps,
+                                                    Resolution resolution) {
   return steps << (resolution << 1);
 }
 

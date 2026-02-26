@@ -22,7 +22,9 @@ extern const char* kMonitoringBasePath;
 extern const char* kLogSubPath;
 
 /// Converts a 0-15 value to an uppercase hex digit.
-static char toHexDigit(int d) { return (d < 10) ? d + '0' : d - 10 + 'A'; }
+inline constexpr char toHexDigit(int d) {
+  return (d < 10) ? d + '0' : d - 10 + 'A';
+}
 
 /// Returns a path formed by joining the base directory and subdirectory.
 String subdir(String base, const String& sub);
