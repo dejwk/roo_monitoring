@@ -4,6 +4,7 @@
 
 namespace roo_monitoring {
 
+/// Time resolution used for log and vault files.
 enum Resolution {
   kResolution_1_ms = 0,             // 1 ms
   kResolution_4_ms = 1,             // 4 ms
@@ -26,8 +27,10 @@ enum Resolution {
   kResolution_68719476736_ms = 18,  // ~ 2.18 years
 };
 
+/// Maximum supported resolution.
 static const Resolution kMaxResolution = kResolution_68719476736_ms;
 
+/// Rounds the timestamp down to the specified resolution bucket.
 static int64_t timestamp_ms_floor(int64_t timestamp_ms, Resolution resolution) {
   // Resolution is the exponent with base 4, so we need to multiply
   // by 2 when converting to base 2. Then, using shift to generate
@@ -35,12 +38,14 @@ static int64_t timestamp_ms_floor(int64_t timestamp_ms, Resolution resolution) {
   return timestamp_ms & (0xFFFFFFFFFFFFFFFFLL << (resolution << 1));
 }
 
+/// Rounds the timestamp up to the specified resolution bucket.
 static int64_t timestamp_ms_ceil(int64_t timestamp_ms, Resolution resolution) {
   // Like the above, but mask is negated (so it has the requested count
   // of trailing 1s) and ORed with the timestamp.
   return timestamp_ms | ~(0xFFFFFFFFFFFFFFFFLL << (resolution << 1));
 }
 
+/// Returns the timestamp delta for the given number of resolution steps.
 static int64_t timestamp_increment(int64_t steps, Resolution resolution) {
   return steps << (resolution << 1);
 }

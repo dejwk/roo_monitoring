@@ -2,9 +2,10 @@
 
 namespace roo_monitoring {
 
-// Represents a single data sample stored in a vault file.
+/// Represents a single data sample stored in a vault file.
 class Sample {
  public:
+  /// Creates a sample with aggregated values.
   Sample(uint64_t stream_id, uint16_t avg_value, uint16_t min_value,
          uint16_t max_value, uint16_t fill)
       : stream_id_(stream_id),
@@ -13,10 +14,15 @@ class Sample {
         max_value_(max_value),
         fill_(fill) {}
 
+  /// Returns the stream identifier.
   uint64_t stream_id() const { return stream_id_; }
+  /// Returns the average value for the bucket.
   uint16_t avg_value() const { return avg_value_; }
+  /// Returns the minimum value for the bucket.
   uint16_t min_value() const { return min_value_; }
+  /// Returns the maximum value for the bucket.
   uint16_t max_value() const { return max_value_; }
+  /// Returns the fill value (0x2000 == 100%).
   uint16_t fill() const { return fill_; }
 
  private:

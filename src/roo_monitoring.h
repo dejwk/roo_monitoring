@@ -1,5 +1,9 @@
 #pragma once
 
+/// Umbrella header for the roo_monitoring module.
+///
+/// Provides data collection, transformation, and vault APIs.
+
 #include <Arduino.h>
 
 #include <set>
@@ -14,9 +18,9 @@
 
 namespace roo_monitoring {
 
-// Represents a collection of timeseries, using the same data mapping
-// transformation and source resolution. Should be used to group together
-// timeseries that will usually be plotted together.
+/// Collection of timeseries sharing transform and source resolution.
+///
+/// Group streams that are commonly queried/plotted together.
 class Collection {
  public:
   Collection(roo_io::Filesystem& fs, String name,
@@ -44,7 +48,7 @@ class LogReader;
 class LogFileReader;
 class VaultWriter;
 
-// Represents a write interface to the monitoring collection.
+/// Write interface for a monitoring collection.
 class Writer {
  public:
   enum Status { OK, IN_PROGRESS, FAILED };
@@ -55,8 +59,7 @@ class Writer {
 
   const Collection& collection() const { return *collection_; }
 
-  // Needs to be called periodically in order to actually incorporate the
-  // logged data into the vault.
+  /// Periodically flushes logged data into vault files.
   void flushAll();
 
   IoState io_state() const { return io_state_; }
@@ -68,7 +71,7 @@ class Writer {
  private:
   friend class WriteTransaction;
 
-  // Returns the index past written to the vault.
+  /// Writes logs to vault and returns past-end index written.
   int16_t writeToVault(roo_io::Mount& fs, LogReader& reader, VaultFileRef ref);
 
   Status compactVaultOneLevel();
@@ -86,9 +89,9 @@ class Writer {
   bool flush_in_progress_;
 };
 
-// Represents a single write operation to the monitoring collection. Should be
-// created as a transient object, as the write commences only when the
-// transaction is destructed.
+/// Represents a single write operation to a monitoring collection.
+///
+/// Intended as a transient RAII object; commit happens on destruction.
 class WriteTransaction {
  public:
   WriteTransaction(Writer* writer);
@@ -101,25 +104,22 @@ class WriteTransaction {
   LogWriter* writer_;
 };
 
-// An 'iterator' class that allows to scan the collected monitoring data
-// at a specified resolution, starting at a specified timestamp.
-//
-// The implementation reads data from subsequent vault files. If the necessary
-// vault files do not exist (e.g. because the scan goes into the future), empty
-// samples are returned.
+/// Iterator that scans monitoring data at a given resolution.
+///
+/// Starts at a specified timestamp and reads across vault files. Missing vault
+/// ranges yield empty samples.
 class VaultIterator {
  public:
-  // Creates the iterator over a specified collection, at the specified
-  // resolution, starting at the specified timestamp (rounded down to align with
-  // the resolution).
+  /// Creates iterator over `collection` at `resolution`, starting at `start`.
+  ///
+  /// Start timestamp is rounded down to resolution boundary.
   VaultIterator(const Collection* collection, int64_t start,
                 Resolution resolution);
 
-  // Returns the current timestamp that the iterator is pointed at.
+  /// Returns current iterator timestamp.
   int64_t cursor() const;
 
-  // Advances the iterator by the time step implied by the resolution, filling
-  // up the specified sample.
+  /// Advances by one resolution step and fills `sample`.
   void next(std::vector<Sample>* sample);
 
  private:
