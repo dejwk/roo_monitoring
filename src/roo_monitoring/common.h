@@ -11,8 +11,13 @@ namespace roo_monitoring {
 
 /// Number of base-4 digits used per range.
 ///
-/// 4^4 = 256 items per range.
+/// Default is 4 (4^4 = 256 items per range). When ROO_MONITORING_TESTING is
+/// defined, use 2 (16 items per range) to keep unit tests small but meaningful.
+#ifdef ROO_MONITORING_TESTING
+static const int kRangeLength = 2;
+#else
 static const int kRangeLength = 4;
+#endif
 /// Number of items in a range (4^(kRangeLength)).
 static const int kRangeElementCount = 1 << (kRangeLength << 1);
 

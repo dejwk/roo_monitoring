@@ -41,7 +41,10 @@ Writer::Writer(Collection* collection)
       cache_(collection->fs(), log_dir_.c_str()),
       writer_(collection->fs(), log_dir_.c_str(), cache_,
               collection->resolution()),
-      io_state_(Writer::IOSTATE_OK) {}
+      io_state_(Writer::IOSTATE_OK),
+      compaction_head_index_end_(0),
+      is_hot_range_(false),
+      flush_in_progress_(false) {}
 
 WriteTransaction::WriteTransaction(Writer* writer)
     : transform_(&writer->collection_->transform()),
@@ -306,7 +309,8 @@ Writer::Status Writer::compactVaultOneLevel() {
   if (!fs.ok()) return Writer::FAILED;
   VaultFileRef parent = compaction_head_.parent();
   compaction_head_index_end_ =
-      64 * compaction_head_.sibling_index() + (compaction_head_index_end_ >> 2);
+      (kRangeElementCount / 4) * compaction_head_.sibling_index() +
+      (compaction_head_index_end_ >> 2);
   compaction_head_ = parent;
   if (compaction_head_.resolution() > kMaxResolution) {
     MLOG(roo_monitoring_compaction) << "Vault compacton finished.";
@@ -317,7 +321,7 @@ Writer::Status Writer::compactVaultOneLevel() {
     // We're definitely done compacting.
     return Writer::OK;
   }
-  CHECK_LE(compaction_head_index_end_, 256);
+  CHECK_LE(compaction_head_index_end_, kRangeElementCount);
   CHECK_GT(compaction_head_index_end_, 0);
   is_hot_range_ |= (compaction_head_.sibling_index() < 3);
 
@@ -335,8 +339,9 @@ Writer::Status Writer::compactVaultOneLevel() {
   roo_io::Status status =
       tryReadLogCompactionCursor(fs, cursor_path.c_str(), &cursor);
   if (status == roo_io::kOk) {
-    reader.open(compaction_head_.child(cursor.target_datum_index() / 64),
-                (cursor.target_datum_index() % 64) << 2,
+    reader.open(compaction_head_.child(cursor.target_datum_index() /
+                                       (kRangeElementCount / 4)),
+                (cursor.target_datum_index() % (kRangeElementCount / 4)) << 2,
                 cursor.log_cursor().position());
     if (reader.ok()) {
       writer.openExisting(cursor.target_datum_index());
@@ -367,7 +372,7 @@ Writer::Status Writer::compactVaultOneLevel() {
   std::vector<Sample> sample_group;
   Aggregator aggregator;
   do {
-    CHECK_LE(reader.index(), 252);
+    CHECK_LE(reader.index(), kRangeElementCount - 4);
     for (int i = 0; i < 4; ++i) {
       // Ignore missing input files when compacting.
       reader.next(&sample_group);
@@ -383,7 +388,7 @@ Writer::Status Writer::compactVaultOneLevel() {
       reader.open(reader.vault_ref().next(), 0, 0);
     }
   } while (writer.write_index() < compaction_head_index_end_);
-  if (writer.write_index() > 0 && writer.write_index() < 256) {
+  if (writer.write_index() > 0 && writer.write_index() < kRangeElementCount) {
     // The vault file is unfinished; create a write cursor for it.
     writeCursor(fs, cursor_path.c_str(),
                 LogCompactionCursor(reader.tell(), writer.write_index()));

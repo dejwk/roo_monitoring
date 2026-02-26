@@ -21,6 +21,27 @@ cc_library(
     ],
 )
 
+cc_library(
+    name = "testing",
+    srcs = glob(
+        [
+            "src/**/*.cpp",
+            "src/**/*.h",
+        ],
+    ),
+    copts = ["-DROO_MONITORING_TESTING"],
+    includes = [
+        "src",
+    ],
+    visibility = ["//visibility:private"],
+    deps = [
+        "@roo_collections",
+        "@roo_io",
+        "@roo_logging",
+        "@roo_testing//roo_testing:arduino",
+    ],
+)
+
 cc_test(
     name = "monitoring_test",
     size = "small",
@@ -32,7 +53,24 @@ cc_test(
     ],
     linkstatic = 1,
     deps = [
-        ":roo_monitoring",
+        ":testing",
+        "@roo_io//test/fs:fakefs",
+        "@roo_testing//:arduino_gtest_main",
+    ],
+)
+
+cc_test(
+    name = "compaction_test",
+    size = "small",
+    srcs = [
+        "test/compaction_test.cpp",
+    ],
+    includes = [
+        "src",
+    ],
+    linkstatic = 1,
+    deps = [
+        ":testing",
         "@roo_io//test/fs:fakefs",
         "@roo_testing//:arduino_gtest_main",
     ],
