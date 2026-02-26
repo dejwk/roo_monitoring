@@ -190,7 +190,7 @@ void VaultFileReader::seekForward(int64_t timestamp) {
   }
   if (reader_.ok()) {
     std::vector<Sample> ignored;
-    for (; !past_eof() && skip >= 0; --skip) {
+    for (; !past_eof() && skip > 0; --skip) {
       next(&ignored);
     }
   } else {
