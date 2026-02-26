@@ -31,8 +31,8 @@
         "examples/**/*.ino"
     ],
     "dependencies": {
-        "dejwk/roo_collections": ">=1.4.1",
-        "dejwk/roo_io": ">=2.1.4",
-        "dejwk/roo_logging": ">=1.5.3"
+        "dejwk/roo_collections": ">=1.4.3",
+        "dejwk/roo_io": ">=2.1.5",
+        "dejwk/roo_logging": ">=1.5.5"
     }
 }
