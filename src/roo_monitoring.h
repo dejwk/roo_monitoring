@@ -23,14 +23,20 @@ namespace roo_monitoring {
 /// Group streams that are commonly queried/plotted together.
 class Collection {
  public:
+  /// Creates a collection rooted in `fs` under the monitoring name `name`.
   Collection(roo_io::Filesystem& fs, String name,
              Resolution resolution = kResolution_1024_ms);
 
+  /// Returns the filesystem that stores this collection.
   roo_io::Filesystem& fs() const { return fs_; }
+  /// Returns the collection name.
   const String& name() const { return name_; }
+  /// Returns the base log/vault resolution used for raw samples.
   Resolution resolution() const { return resolution_; }
+  /// Returns the value transform applied when encoding float samples.
   const Transform& transform() const { return transform_; }
 
+  /// Writes the absolute vault file path for `ref` into `path`.
   void getVaultFilePath(const VaultFileRef& ref, String* path) const;
 
  private:
@@ -51,21 +57,35 @@ class VaultWriter;
 /// Write interface for a monitoring collection.
 class Writer {
  public:
-  enum Status { OK, IN_PROGRESS, FAILED };
+  /// Result of a flush or compaction step.
+  enum Status {
+    OK,           ///< The requested operation completed successfully.
+    IN_PROGRESS,  ///< Additional calls are required to finish the operation.
+    FAILED        ///< The operation failed due to an I/O or format error.
+  };
 
-  enum IoState { IOSTATE_OK, IOSTATE_ERROR };
+  /// Persistent health of the writer's filesystem I/O.
+  enum IoState {
+    IOSTATE_OK,     ///< No I/O error has been observed.
+    IOSTATE_ERROR   ///< At least one write/read operation has failed.
+  };
 
+  /// Creates a writer for the specified monitoring collection.
   Writer(Collection* collection);
 
+  /// Returns the collection managed by this writer.
   const Collection& collection() const { return *collection_; }
 
-  /// Periodically flushes logged data into vault files.
+  /// Flushes pending log data and runs compaction until no more work remains.
   void flushAll();
 
+  /// Returns the last observed I/O health state.
   IoState io_state() const { return io_state_; }
 
+  /// Performs a bounded amount of flush/compaction work.
   void flushSome();
 
+  /// Returns true while a multi-step flush is still in progress.
   bool isFlushInProgress() { return flush_in_progress_; }
 
  private:
@@ -94,9 +114,12 @@ class Writer {
 /// Intended as a transient RAII object; commit happens on destruction.
 class WriteTransaction {
  public:
+  /// Starts a write transaction that appends samples through `writer`.
   WriteTransaction(Writer* writer);
+  /// Closes the underlying log writer, committing the transaction.
   ~WriteTransaction();
 
+  /// Appends one sample at `timestamp` for `stream_id` with float `data`.
   void write(int64_t timestamp, uint64_t stream_id, float data);
 
  private:

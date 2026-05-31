@@ -18,8 +18,11 @@ class VaultFileRef {
   /// Creates a reference that encloses the timestamp at the given resolution.
   static VaultFileRef Lookup(int64_t timestamp, Resolution resolution);
 
+  /// Creates a default reference at timestamp 0 and base resolution.
   VaultFileRef() : timestamp_(0), resolution_(kResolution_1024_ms) {}
+  /// Copies another vault file reference.
   VaultFileRef(const VaultFileRef& other) = default;
+  /// Assigns the contents of another vault file reference.
   VaultFileRef& operator=(const VaultFileRef& other) = default;
 
   /// Returns the start timestamp for this vault file.
@@ -146,6 +149,7 @@ class VaultFileReader {
   /// Returns the current log cursor.
   LogCursor tell();
 
+  /// Closes the reader if needed and releases any open file handle.
   ~VaultFileReader();
 
  private:

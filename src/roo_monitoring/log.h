@@ -27,6 +27,7 @@ class LogSample {
   uint16_t value_;
 };
 
+/// Orders log samples by stream identifier.
 inline bool operator<(const LogSample& a, const LogSample& b) {
   return a.stream_id() < b.stream_id();
 }

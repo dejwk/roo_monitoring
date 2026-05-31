@@ -52,7 +52,7 @@ class VaultWriter {
   /// Closes the underlying writer.
   void close() { writer_.close(); }
 
-  /// Returns the current write index within the vault file.
+  /// Returns the next entry index that will be written.
   int write_index() const { return write_index_; }
 
   /// Writes an empty vault file payload.
