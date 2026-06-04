@@ -66,8 +66,8 @@ class Writer {
 
   /// Persistent health of the writer's filesystem I/O.
   enum IoState {
-    IOSTATE_OK,     ///< No I/O error has been observed.
-    IOSTATE_ERROR   ///< At least one write/read operation has failed.
+    IOSTATE_OK,    ///< No I/O error has been observed.
+    IOSTATE_ERROR  ///< At least one write/read operation has failed.
   };
 
   /// Creates a writer for the specified monitoring collection.
