@@ -1,3 +1,4 @@
+#include <string>
 #include <vector>
 
 #include "fakefs_reference.h"
@@ -84,6 +85,36 @@ TEST(VaultReaderTest, SeekForwardPositionsAtExpectedEntry) {
   ASSERT_EQ(samples.size(), 1u);
   EXPECT_EQ(samples[0].avg_value(), 2u);
 }
+
+class InvalidVaultSampleCountTest : public testing::TestWithParam<std::string> {
+};
+
+// Verifies truncated and malformed counts fail instead of becoming empty
+// entries.
+TEST_P(InvalidVaultSampleCountTest, RejectsInvalidCount) {
+  roo_io::fakefs::FakeFs fake_fs;
+  roo_io::fakefs::FakeReferenceFs fs(fake_fs);
+  Collection collection(fs, "test", kResolution_1_ms);
+  VaultFileRef ref = VaultFileRef::Lookup(0, kResolution_1_ms);
+  String path;
+  collection.getVaultFilePath(ref, &path);
+  std::string contents = std::string("\x01\x01") + GetParam();
+  ASSERT_EQ(
+      roo_io::fakefs::CreateTextFile(fake_fs, path.c_str(), contents.c_str()),
+      roo_io::kOk);
+
+  VaultFileReader reader(&collection);
+  ASSERT_TRUE(reader.open(ref, 0, 0));
+  std::vector<Sample> samples;
+  EXPECT_FALSE(reader.next(&samples));
+  EXPECT_TRUE(samples.empty());
+  EXPECT_FALSE(reader.is_open());
+}
+
+INSTANTIATE_TEST_SUITE_P(VaultReaderTest, InvalidVaultSampleCountTest,
+                         testing::Values(std::string(), std::string("\x80"),
+                                         std::string(9, '\xff') + '\x02',
+                                         std::string(10, '\x80')));
 
 }  // namespace
 }  // namespace roo_monitoring

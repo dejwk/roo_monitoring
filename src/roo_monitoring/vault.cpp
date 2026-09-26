@@ -37,13 +37,16 @@ bool read_header(roo_io::MultipassInputStreamReader& is) {
 roo_io::Status read_data(roo_io::MultipassInputStreamReader& is,
                          std::vector<Sample>* data, bool ignore_fill) {
   data->clear();
-  uint64_t sample_count = roo_io::ReadVarU64(is);
-  if (!is.ok()) {
-    if (is.status() != roo_io::kEndOfStream) {
+  uint64_t sample_count = 0;
+  if (!roo_io::ReadVarU64(is, sample_count)) {
+    // Malformed varints can fail without an underlying I/O error.
+    roo_io::Status status =
+        is.status() == roo_io::kOk ? roo_io::kReadError : is.status();
+    if (status != roo_io::kEndOfStream) {
       LOG(ERROR) << "Failed to read data from the vault file: "
-                 << roo_io::StatusAsString(is.status());
+                 << roo_io::StatusAsString(status);
     }
-    return is.status();
+    return status;
   }
   for (uint64_t i = 0; i < sample_count; ++i) {
     uint64_t stream_id = is.readVarU64();
