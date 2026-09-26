@@ -1,3 +1,11 @@
+# roo_monitoring 1.1.5
+
+- Update dependencies to `roo_collections` 1.4.8, `roo_io` 2.4.0, and `roo_logging` 1.5.11; raise PlatformIO minimum versions accordingly.
+- Upgrade `roo_testing` to 2.3.0.
+- Add an ESP-IDF ESP32 test profile, automatic profile selection for ESP-IDF example runs, and a helper to run tests across Arduino and ESP-IDF profiles.
+
+---
+
 # roo_monitoring 1.1.4
 
 - Updated Roo dependencies to roo_collections 1.4.7, roo_io 2.3.0, and roo_logging 1.5.10, including matching PlatformIO minimum versions.
