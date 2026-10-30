@@ -159,6 +159,8 @@ class VaultFileReader {
   roo_io::MultipassInputStreamReader reader_;
   int index_;
   int position_;
+  // A short file was deliberately closed after reaching its physical EOF.
+  bool exhausted_;
 };
 
 }  // namespace roo_monitoring

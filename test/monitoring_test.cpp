@@ -86,6 +86,36 @@ TEST(VaultReaderTest, SeekForwardPositionsAtExpectedEntry) {
   EXPECT_EQ(samples[0].avg_value(), 2u);
 }
 
+// Verifies a short vault can supply a compaction cursor after EOF and that
+// reopening it clears the exhausted state.
+TEST(VaultReaderTest, CursorAfterPrematureEndOfFile) {
+  roo_io::fakefs::FakeFs fake_fs;
+  roo_io::fakefs::FakeReferenceFs fs(fake_fs);
+  Collection collection(fs, "test", kResolution_1_ms);
+  VaultFileRef ref = VaultFileRef::Lookup(0, kResolution_1_ms);
+  VaultWriter writer(&collection, ref);
+  ASSERT_EQ(writer.openNew(), roo_io::kOk);
+  writer.writeEmptyData();
+  writer.close();
+
+  VaultFileReader reader(&collection);
+  ASSERT_TRUE(reader.open(ref, 0, 0));
+  std::vector<Sample> samples;
+  ASSERT_TRUE(reader.next(&samples));
+  ASSERT_FALSE(reader.next(&samples));
+  ASSERT_FALSE(reader.is_open());
+  EXPECT_FALSE(reader.next(&samples));
+  EXPECT_FALSE(reader.next(&samples));
+  EXPECT_EQ(reader.index(), 4);
+  EXPECT_EQ(reader.tell().position(), 0);
+
+  ASSERT_TRUE(reader.open(ref, 0, 0));
+  ASSERT_TRUE(reader.next(&samples));
+  EXPECT_GT(reader.tell().position(), 0);
+  reader.close();
+  EXPECT_DEATH(reader.tell(), "unexpectedly closed");
+}
+
 class InvalidVaultSampleCountTest : public testing::TestWithParam<std::string> {
 };
 

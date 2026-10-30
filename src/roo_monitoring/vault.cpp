@@ -75,10 +75,12 @@ VaultFileReader::VaultFileReader(const Collection* collection)
       fs_(),
       reader_(),
       index_(0),
-      position_(0) {}
+      position_(0),
+      exhausted_(false) {}
 
 bool VaultFileReader::open(const VaultFileRef& vault_ref, int index,
                            int64_t offset) {
+  exhausted_ = false;
   String path;
   ref_ = vault_ref;
   collection_->getVaultFilePath(vault_ref, &path);
@@ -137,7 +139,7 @@ LogCursor VaultFileReader::tell() {
                   "read and is now closed.";
   } else if (reader_.ok()) {
     position_ = reader_.position();
-  } else if (reader_.status() == roo_io::kClosed) {
+  } else if (reader_.status() == roo_io::kClosed && !exhausted_) {
     LOG(FATAL) << "Attempt to read a position in a file that has been "
                   "unexpectedly closed at index "
                << index_;
@@ -171,6 +173,9 @@ bool VaultFileReader::next(std::vector<Sample>* sample) {
     MLOG(roo_monitoring_vault_reader)
         << "End of file reached prematurely, while reading data at index "
         << index_;
+    // close() resets the stream status to kClosed. Remember that this is
+    // expected so compaction can still checkpoint the exhausted input.
+    exhausted_ = true;
     position_ = 0;
   } else {
     position_ = reader_.position();
