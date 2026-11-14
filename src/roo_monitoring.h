@@ -36,6 +36,14 @@ class Collection {
   /// Returns the value transform applied when encoding float samples.
   const Transform& transform() const { return transform_; }
 
+  /// Returns the exclusive base-bucket boundary of the last successful
+  /// compaction through all resolutions, or -1 before one completes in this
+  /// instance. Round down to the requested resolution for complete buckets.
+  /// Append-only readers may cache earlier buckets. This is a data timestamp,
+  /// not wall time; it does not advance when collection/compaction stops.
+  /// Access must be serialized with Writer::flushSome()/flushAll().
+  int64_t compactedUntil() const { return compacted_until_; }
+
   /// Writes the absolute vault file path for `ref` into `path`.
   void getVaultFilePath(const VaultFileRef& ref, String* path) const;
 
@@ -48,6 +56,7 @@ class Collection {
   String base_dir_;
   Resolution resolution_;
   Transform transform_;
+  int64_t compacted_until_ = -1;
 };
 
 class LogReader;
@@ -107,6 +116,7 @@ class Writer {
   bool is_hot_range_;
 
   bool flush_in_progress_;
+  int64_t pending_compacted_until_ = -1;
 };
 
 /// Represents a single write operation to a monitoring collection.

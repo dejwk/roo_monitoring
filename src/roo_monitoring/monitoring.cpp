@@ -1,4 +1,5 @@
 
+#include <algorithm>
 #include <map>
 
 #include "common.h"
@@ -191,6 +192,10 @@ void Writer::flushSome() {
     Status status = compactVaultOneLevel();
     if (status == Writer::OK) {
       flush_in_progress_ = false;
+      if (io_state_ == IOSTATE_OK) {
+        collection_->compacted_until_ =
+            std::max(collection_->compacted_until_, pending_compacted_until_);
+      }
       // We're done compacting. Check if there is more to read?
       LogReader reader(fs, log_dir_.c_str(), cache_, collection_->resolution(),
                        writer_.first_timestamp());
@@ -301,6 +306,12 @@ int16_t Writer::writeToVault(roo_io::Mount& fs, LogReader& reader,
   // compaction_range.index_begin = compaction_index_begin;
   int16_t compaction_index_end = writer.write_index();
   writer.close();
+  if (writer.status() != roo_io::kClosed) {
+    io_state_ = IOSTATE_ERROR;
+    return -1;
+  }
+  // Do not publish base-vault progress until all parent levels have finished.
+  pending_compacted_until_ = current;
   return compaction_index_end;
 }
 
@@ -390,8 +401,11 @@ Writer::Status Writer::compactVaultOneLevel() {
   } while (writer.write_index() < compaction_head_index_end_);
   if (writer.write_index() > 0 && writer.write_index() < kRangeElementCount) {
     // The vault file is unfinished; create a write cursor for it.
-    writeCursor(fs, cursor_path.c_str(),
-                LogCompactionCursor(reader.tell(), writer.write_index()));
+    if (!writeCursor(
+            fs, cursor_path.c_str(),
+            LogCompactionCursor(reader.tell(), writer.write_index()))) {
+      return Writer::FAILED;
+    }
   }
   reader.close();
   writer.close();

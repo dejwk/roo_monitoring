@@ -1,4 +1,6 @@
 #include <algorithm>
+#include <functional>
+#include <utility>
 #include <vector>
 
 #include "fakefs_reference.h"
@@ -7,6 +9,71 @@
 
 namespace roo_monitoring {
 namespace {
+
+class RemovableFs : public roo_io::fakefs::FakeReferenceFs {
+ public:
+  using FakeReferenceFs::FakeReferenceFs;
+  bool present = true;
+
+ protected:
+  roo_io::MountImpl::MountResult mountImpl(
+      std::function<void()> unmount_fn) override {
+    if (!present) return roo_io::MountImpl::MountError(roo_io::kNoMedia);
+    return FakeReferenceFs::mountImpl(std::move(unmount_fn));
+  }
+};
+
+// Verifies progress is published only after the complete hierarchy is flushed,
+// excludes the hot bucket, survives missing media and idle flushes, and is
+// recovered after restart.
+TEST(VaultCompactionTest, PublishesCompletedDataBoundary) {
+  roo_io::fakefs::FakeFs fake_fs;
+  RemovableFs fs(fake_fs);
+  Collection collection(fs, "progress", kResolution_1_ms);
+  Writer writer(&collection);
+  EXPECT_EQ(-1, collection.compactedUntil());
+  writer.flushAll();
+  EXPECT_EQ(-1, collection.compactedUntil());
+  for (int end : {16, 32}) {
+    {
+      WriteTransaction tx(&writer);
+      for (int time = end == 16 ? 0 : 17; time <= end; ++time) {
+        tx.write(time, 1, 20.0f);
+      }
+    }
+    int64_t previous = collection.compactedUntil();
+    writer.flushSome();
+    ASSERT_TRUE(writer.isFlushInProgress());
+    EXPECT_EQ(previous, collection.compactedUntil());
+    fs.present = false;
+    writer.flushSome();
+    EXPECT_TRUE(writer.isFlushInProgress());
+    EXPECT_EQ(previous, collection.compactedUntil());
+    fs.present = true;
+    int steps = 0;
+    while (writer.isFlushInProgress() && steps++ < 64) {
+      writer.flushSome();
+      if (writer.isFlushInProgress()) {
+        EXPECT_EQ(previous, collection.compactedUntil());
+      }
+    }
+    ASSERT_FALSE(writer.isFlushInProgress());
+    ASSERT_EQ(Writer::IOSTATE_OK, writer.io_state());
+    EXPECT_EQ(end, collection.compactedUntil());
+    VaultIterator reader(&collection, end - 16, kResolution_16_ms);
+    std::vector<Sample> samples;
+    reader.next(&samples);
+    ASSERT_EQ(1u, samples.size());
+    EXPECT_GT(samples[0].fill(), 0);
+    writer.flushAll();
+    EXPECT_EQ(end, collection.compactedUntil());
+  }
+  Collection reopened(fs, "progress", kResolution_1_ms);
+  Writer resumed(&reopened);
+  EXPECT_EQ(-1, reopened.compactedUntil());
+  resumed.flushAll();
+  EXPECT_EQ(32, reopened.compactedUntil());
+}
 
 TEST(VaultCompactionTest, AggregatesToParentVault) {
   roo_io::fakefs::FakeFs fake_fs;
