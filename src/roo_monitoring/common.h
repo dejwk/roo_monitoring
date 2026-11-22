@@ -39,7 +39,9 @@ String filepath(String dir, int64_t file);
 /// Lists timestamp-named files in the directory and returns their timestamps.
 ///
 /// The timestamps are in milliseconds since Epoch and sorted ascending.
-std::vector<int64_t> listFiles(roo_io::Mount& fs, const char* dirname);
+/// Reports directory iteration errors through @p status when supplied.
+std::vector<int64_t> listFiles(roo_io::Mount& fs, const char* dirname,
+                               roo_io::Status* status = nullptr);
 
 /// Helper class for generating filenames corresponding to timestamps.
 class Filename {

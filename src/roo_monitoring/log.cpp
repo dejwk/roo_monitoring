@@ -107,6 +107,20 @@ std::vector<int64_t> CachedLogDir::list() {
   return result;
 }
 
+roo_io::Status CachedLogDir::deleteRange(roo_io::Mount& fs, int64_t start,
+                                         int64_t end) {
+  roo_io::Status status;
+  std::vector<int64_t> entries = listFiles(fs, log_dir_, &status);
+  if (status != roo_io::kOk && status != roo_io::kNotFound) return status;
+  auto it = std::lower_bound(entries.begin(), entries.end(), start);
+  for (; it != entries.end() && *it < end; ++it) {
+    status = fs.remove(filepath(log_dir_, *it).c_str());
+    if (status != roo_io::kOk && status != roo_io::kNotFound) return status;
+    entries_.erase(*it);
+  }
+  return roo_io::kOk;
+}
+
 void CachedLogDir::sync() {
   if (synced_) return;
   entries_.clear();
@@ -164,7 +178,7 @@ bool LogReader::nextRange() {
   return true;
 }
 
-bool LogReader::isHotRange() { return hot_file_ < range_ceil_; }
+bool LogReader::isHotRange() { return hot_file_ <= range_ceil_; }
 
 bool LogReader::open(int64_t file, uint64_t position) {
   return reader_.open(filepath(log_dir_, file).c_str(), position);
@@ -209,14 +223,11 @@ LogCursor LogReader::tell() {
 
 void LogReader::deleteRange() {
   CHECK(!isHotRange());
-  for (auto i = group_begin_; i != group_end_; ++i) {
-    MLOG(roo_monitoring_compaction)
-        << "Removing processed log file " << roo_logging::hex << *i;
-    if (fs_.remove(filepath(log_dir_, *i).c_str()) != roo_io::kOk) {
-      LOG(ERROR) << "Failed to remove processed log file " << roo_logging::hex
-                 << *i;
-    }
-    cache_.erase(*i);
+  roo_io::Status status =
+      cache_.deleteRange(fs_, range_floor_, range_ceil_ + 1);
+  if (status != roo_io::kOk) {
+    LOG(ERROR) << "Failed to remove processed log range: "
+               << roo_io::StatusAsString(status);
   }
 }
 

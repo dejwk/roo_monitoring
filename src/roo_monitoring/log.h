@@ -54,6 +54,10 @@ class CachedLogDir {
   /// Returns the cached entries sorted by timestamp.
   std::vector<int64_t> list();
 
+  /// Removes log files in [start, end). Uses a fresh directory listing so a
+  /// restart during cleanup can resume, including after the last log left.
+  roo_io::Status deleteRange(roo_io::Mount& fs, int64_t start, int64_t end);
+
  private:
   void sync();
 

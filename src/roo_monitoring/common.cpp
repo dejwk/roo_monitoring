@@ -42,10 +42,12 @@ static int64_t decodeHex(const char* filename) {
 
 }  // namespace
 
-std::vector<int64_t> listFiles(roo_io::Mount& fs, const char* dirname) {
+std::vector<int64_t> listFiles(roo_io::Mount& fs, const char* dirname,
+                               roo_io::Status* status) {
   std::vector<int64_t> result;
   roo_io::Directory dir = fs.opendir(dirname);
   if (!dir.isOpen()) {
+    if (status != nullptr) *status = dir.status();
     LOG(WARNING) << "Failed to open directory " << dirname << ": "
                  << roo_io::StatusAsString(dir.status());
     return result;
@@ -60,6 +62,9 @@ std::vector<int64_t> listFiles(roo_io::Mount& fs, const char* dirname) {
       continue;
     }
     result.push_back(decodeHex(dir.entry().name()));
+  }
+  if (status != nullptr) {
+    *status = dir.status() == roo_io::kEndOfStream ? roo_io::kOk : dir.status();
   }
   std::sort(result.begin(), result.end());
   dir.close();

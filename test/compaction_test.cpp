@@ -5,6 +5,7 @@
 
 #include "fakefs_reference.h"
 #include "gtest/gtest.h"
+#include "roo_io/data/output_stream_writer.h"
 #include "roo_monitoring.h"
 
 namespace roo_monitoring {
@@ -73,6 +74,191 @@ TEST(VaultCompactionTest, PublishesCompletedDataBoundary) {
   EXPECT_EQ(-1, reopened.compactedUntil());
   resumed.flushAll();
   EXPECT_EQ(32, reopened.compactedUntil());
+}
+
+// Verifies a restart before parent compaction or after saving the 4 ms
+// cursor replays the base range and completes the remaining hierarchy.
+TEST(VaultCompactionTest, ResumesHistoricalRangeAfterRestart) {
+  for (int steps_before_restart : {1, 2}) {
+    SCOPED_TRACE(steps_before_restart);
+    roo_io::fakefs::FakeFs fake_fs;
+    roo_io::fakefs::FakeReferenceFs fs(fake_fs);
+    String log_dir =
+        subdir(subdir(kMonitoringBasePath, "restart"), kLogSubPath);
+    String log_path = filepath(log_dir, 0);
+    {
+      Collection collection(fs, "restart", kResolution_1_ms);
+      Writer writer(&collection);
+      {
+        WriteTransaction tx(&writer);
+        tx.write(0, 1, 20.0f);
+        tx.write(1024, 1, 20.0f);
+      }
+      for (int i = 0; i < steps_before_restart; ++i) writer.flushSome();
+      ASSERT_TRUE(writer.isFlushInProgress());
+      ASSERT_EQ(Writer::IOSTATE_OK, writer.io_state());
+      EXPECT_EQ(-1, collection.compactedUntil());
+      ASSERT_EQ(roo_io::kOk, fake_fs.stat(log_path.c_str()).status);
+      VaultIterator grandparent(&collection, 0, kResolution_16_ms);
+      std::vector<Sample> samples;
+      grandparent.next(&samples);
+      EXPECT_TRUE(samples.empty());
+    }
+
+    Collection reopened(fs, "restart", kResolution_1_ms);
+    Writer resumed(&reopened);
+    resumed.flushAll();
+    ASSERT_EQ(Writer::IOSTATE_OK, resumed.io_state());
+    EXPECT_GE(reopened.compactedUntil(), 16);
+    EXPECT_EQ(roo_io::kNotFound, fake_fs.stat(log_path.c_str()).status);
+    for (Resolution resolution :
+         {kResolution_1_ms, kResolution_4_ms, kResolution_16_ms}) {
+      VaultIterator reader(&reopened, 0, resolution);
+      std::vector<Sample> samples;
+      reader.next(&samples);
+      ASSERT_EQ(1u, samples.size());
+      EXPECT_EQ(reopened.transform().apply(20.0f), samples[0].avg_value());
+    }
+  }
+}
+
+// Verifies restart resumes removal of a completed range with one log left
+// or with every log gone, while preserving samples from the deleted log.
+TEST(VaultCompactionTest, ResumesCleanupOfCompletedRange) {
+  for (bool remaining_log : {true, false}) {
+    SCOPED_TRACE(remaining_log);
+    roo_io::fakefs::FakeFs fake_fs;
+    roo_io::fakefs::FakeReferenceFs fs(fake_fs);
+    String log_dir =
+        subdir(subdir(kMonitoringBasePath, "cleanup"), kLogSubPath);
+    String first_path = filepath(log_dir, 0);
+    String second_path = filepath(log_dir, 4);
+    String newer_path = filepath(log_dir, 1024);
+    String marker_path = subdir(log_dir, "compaction.done");
+    Collection collection(fs, "cleanup", kResolution_1_ms);
+    {
+      Writer writer(&collection);
+      WriteTransaction tx(&writer);
+      tx.write(0, 1, 20.0f);
+    }
+    std::vector<roo_io::byte> second_log;
+    {
+      Writer writer(&collection);
+      {
+        WriteTransaction tx(&writer);
+        tx.write(4, 1, 40.0f);
+        tx.write(1024, 1, 60.0f);
+      }
+      second_log = roo_io::fakefs::ReadFile(fake_fs, second_path.c_str());
+      ASSERT_FALSE(second_log.empty());
+      writer.flushAll();
+      ASSERT_EQ(Writer::IOSTATE_OK, writer.io_state());
+      ASSERT_EQ(16, collection.compactedUntil());
+    }
+    ASSERT_EQ(roo_io::kNotFound, fake_fs.stat(first_path.c_str()).status);
+    ASSERT_EQ(roo_io::kNotFound, fake_fs.stat(second_path.c_str()).status);
+    ASSERT_EQ(roo_io::kNotFound, fake_fs.stat(marker_path.c_str()).status);
+
+    // Restore the on-disk state left by a restart at the end of log cleanup.
+    {
+      roo_io::Mount mount = fs.mount();
+      roo_io::OutputStreamWriter marker(
+          mount.fopenForWrite(marker_path.c_str(), roo_io::kFailIfExists));
+      ASSERT_TRUE(marker.ok());
+      marker.writeBeU64(16);
+      marker.close();
+      ASSERT_EQ(roo_io::kClosed, marker.status());
+    }
+    if (remaining_log) {
+      roo_io::fakefs::FileStream log =
+          fake_fs.open(second_path.c_str(), roo_io::fakefs::FakeFs::kWrite);
+      ASSERT_TRUE(log.isOpen());
+      ASSERT_EQ(second_log.size(),
+                log.write(second_log.data(), second_log.size()));
+      log.close();
+    }
+
+    Collection reopened(fs, "cleanup", kResolution_1_ms);
+    Writer resumed(&reopened);
+    resumed.flushAll();
+    ASSERT_EQ(Writer::IOSTATE_OK, resumed.io_state());
+    EXPECT_GE(reopened.compactedUntil(), 16);
+    EXPECT_EQ(roo_io::kNotFound, fake_fs.stat(second_path.c_str()).status);
+    EXPECT_EQ(roo_io::kNotFound, fake_fs.stat(marker_path.c_str()).status);
+    EXPECT_EQ(roo_io::kOk, fake_fs.stat(newer_path.c_str()).status);
+    VaultIterator reader(&reopened, 0, kResolution_4_ms);
+    std::vector<Sample> samples;
+    reader.next(&samples);
+    ASSERT_EQ(1u, samples.size());
+    EXPECT_EQ(reopened.transform().apply(20.0f), samples[0].avg_value());
+  }
+}
+
+// Verifies historical logs survive a failure to publish the cleanup record.
+TEST(VaultCompactionTest, KeepsLogsWhenCompletionMarkerCannotBeWritten) {
+  roo_io::fakefs::FakeFs fake_fs;
+  roo_io::fakefs::FakeReferenceFs fs(fake_fs);
+  String log_dir =
+      subdir(subdir(kMonitoringBasePath, "marker_error"), kLogSubPath);
+  String log_path = filepath(log_dir, 0);
+  String marker_path = subdir(log_dir, "compaction.done");
+  String temporary_path = marker_path + ".tmp";
+  {
+    Collection collection(fs, "marker_error", kResolution_1_ms);
+    Writer writer(&collection);
+    {
+      WriteTransaction tx(&writer);
+      tx.write(0, 1, 20.0f);
+      tx.write(1024, 1, 20.0f);
+    }
+    ASSERT_EQ(roo_io::kOk, fake_fs.mkdir(temporary_path.c_str()));
+    writer.flushAll();
+    EXPECT_EQ(Writer::IOSTATE_ERROR, writer.io_state());
+    EXPECT_EQ(-1, collection.compactedUntil());
+    EXPECT_EQ(roo_io::kOk, fake_fs.stat(log_path.c_str()).status);
+    EXPECT_EQ(roo_io::kNotFound, fake_fs.stat(marker_path.c_str()).status);
+    VaultIterator reader(&collection, 0, kResolution_16_ms);
+    std::vector<Sample> samples;
+    reader.next(&samples);
+    ASSERT_EQ(1u, samples.size());
+  }
+
+  ASSERT_EQ(roo_io::kOk, fake_fs.rmdir(temporary_path.c_str()));
+  Collection reopened(fs, "marker_error", kResolution_1_ms);
+  Writer resumed(&reopened);
+  resumed.flushAll();
+  EXPECT_EQ(Writer::IOSTATE_OK, resumed.io_state());
+  EXPECT_EQ(16, reopened.compactedUntil());
+  EXPECT_EQ(roo_io::kNotFound, fake_fs.stat(log_path.c_str()).status);
+}
+
+// Verifies that a hot log opened in the last bucket of a range remains
+// available until the writer actually moves into the next range.
+TEST(VaultCompactionTest, KeepsHotLogAtEndOfRange) {
+  roo_io::fakefs::FakeFs fake_fs;
+  roo_io::fakefs::FakeReferenceFs fs(fake_fs);
+  Collection collection(fs, "last_bucket", kResolution_1_ms);
+  Writer writer(&collection);
+  {
+    WriteTransaction tx(&writer);
+    tx.write(15, 1, 20.0f);
+  }
+  writer.flushAll();
+  ASSERT_EQ(Writer::IOSTATE_OK, writer.io_state());
+  EXPECT_EQ(0, collection.compactedUntil());
+  String log_dir =
+      subdir(subdir(kMonitoringBasePath, "last_bucket"), kLogSubPath);
+  String path = filepath(log_dir, 15);
+  EXPECT_EQ(roo_io::kOk, fake_fs.stat(path.c_str()).status);
+
+  {
+    WriteTransaction tx(&writer);
+    tx.write(16, 1, 20.0f);
+  }
+  writer.flushAll();
+  ASSERT_EQ(Writer::IOSTATE_OK, writer.io_state());
+  EXPECT_EQ(16, collection.compactedUntil());
+  EXPECT_EQ(roo_io::kNotFound, fake_fs.stat(path.c_str()).status);
 }
 
 TEST(VaultCompactionTest, AggregatesToParentVault) {

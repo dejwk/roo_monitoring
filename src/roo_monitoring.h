@@ -113,7 +113,7 @@ class Writer {
 
   VaultFileRef compaction_head_;
   int16_t compaction_head_index_end_;
-  bool is_hot_range_;
+  bool compacting_historical_range_;
 
   bool flush_in_progress_;
   int64_t pending_compacted_until_ = -1;
