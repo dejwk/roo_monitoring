@@ -93,6 +93,7 @@ class Writer {
   IoState io_state() const { return io_state_; }
 
   /// Performs a bounded amount of flush/compaction work.
+  /// After an I/O failure, use a new writer to retry compaction.
   void flushSome();
 
   /// Returns true while a multi-step flush is still in progress.

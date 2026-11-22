@@ -76,6 +76,183 @@ TEST(VaultCompactionTest, PublishesCompletedDataBoundary) {
   EXPECT_EQ(32, reopened.compactedUntil());
 }
 
+// Verifies an unwritable vault or cursor leaves the hot log available for
+// retry and prevents compaction progress from being published.
+TEST(VaultCompactionTest, FullDiskDoesNotPublishHotRange) {
+  for (size_t available : {0u, 12u}) {
+    SCOPED_TRACE(available);
+    roo_io::fakefs::FakeFs fake_fs;
+    roo_io::fakefs::FakeReferenceFs fs(fake_fs);
+    Collection collection(fs, "full", kResolution_1_ms);
+    Writer writer(&collection);
+    {
+      WriteTransaction tx(&writer);
+      tx.write(0, 1, 20.0f);
+      tx.write(1, 1, 20.0f);
+    }
+    String log_dir = subdir(subdir(kMonitoringBasePath, "full"), kLogSubPath);
+    String log_path = filepath(log_dir, 0);
+    roo_io::fakefs::StatResult log = fake_fs.stat(log_path.c_str());
+    ASSERT_EQ(roo_io::kOk, log.status);
+
+    // The first bucket occupies 12 bytes including the header. Allow either
+    // no writes or enough room for the vault but none for the cursor.
+    fake_fs.setCapacity(log.size + available);
+    writer.flushAll();
+    EXPECT_EQ(Writer::IOSTATE_ERROR, writer.io_state());
+    EXPECT_EQ(-1, collection.compactedUntil());
+    EXPECT_EQ(roo_io::kOk, fake_fs.stat(log_path.c_str()).status);
+    String vault_path;
+    collection.getVaultFilePath(VaultFileRef::Lookup(0, kResolution_1_ms),
+                                &vault_path);
+    String cursor_path = vault_path + ".cursor";
+    EXPECT_EQ(roo_io::kNotFound, fake_fs.stat(cursor_path.c_str()).status);
+  }
+}
+
+// Verifies historical logs survive a vault write failure and remain available
+// for a new writer to retry.
+TEST(VaultCompactionTest, FullDiskPreservesHistoricalLog) {
+  roo_io::fakefs::FakeFs fake_fs;
+  roo_io::fakefs::FakeReferenceFs fs(fake_fs);
+  Collection collection(fs, "full", kResolution_1_ms);
+  Writer writer(&collection);
+  {
+    WriteTransaction tx(&writer);
+    tx.write(0, 1, 20.0f);
+    tx.write(256, 1, 20.0f);
+  }
+  String log_dir = subdir(subdir(kMonitoringBasePath, "full"), kLogSubPath);
+  String old_path = filepath(log_dir, 0);
+  String hot_path = filepath(log_dir, 256);
+  roo_io::fakefs::StatResult old_log = fake_fs.stat(old_path.c_str());
+  roo_io::fakefs::StatResult hot_log = fake_fs.stat(hot_path.c_str());
+  ASSERT_EQ(roo_io::kOk, old_log.status);
+  ASSERT_EQ(roo_io::kOk, hot_log.status);
+  fake_fs.setCapacity(old_log.size + hot_log.size);
+
+  writer.flushSome();
+  EXPECT_EQ(Writer::IOSTATE_ERROR, writer.io_state());
+  EXPECT_EQ(-1, collection.compactedUntil());
+  EXPECT_EQ(roo_io::kOk, fake_fs.stat(old_path.c_str()).status);
+
+  fake_fs.setCapacity(4096);
+  writer.flushAll();
+  EXPECT_EQ(roo_io::kOk, fake_fs.stat(old_path.c_str()).status);
+
+  Collection reopened(fs, "full", kResolution_1_ms);
+  Writer retry(&reopened);
+  retry.flushAll();
+  EXPECT_EQ(Writer::IOSTATE_OK, retry.io_state());
+  VaultIterator reader(&reopened, 0, kResolution_1_ms);
+  std::vector<Sample> samples;
+  reader.next(&samples);
+  ASSERT_EQ(1u, samples.size());
+  EXPECT_EQ(reopened.transform().apply(20.0f), samples[0].avg_value());
+}
+
+// Verifies a parent write failure stops compaction before saving its cursor.
+TEST(VaultCompactionTest, FullDiskRejectsParentVault) {
+  roo_io::fakefs::FakeFs fake_fs;
+  roo_io::fakefs::FakeReferenceFs fs(fake_fs);
+  Collection collection(fs, "full", kResolution_1_ms);
+  Writer writer(&collection);
+  {
+    WriteTransaction tx(&writer);
+    tx.write(0, 1, 20.0f);
+    tx.write(3, 1, 20.0f);
+    tx.write(4, 1, 20.0f);
+  }
+  writer.flushSome();
+  ASSERT_TRUE(writer.isFlushInProgress());
+  ASSERT_EQ(Writer::IOSTATE_OK, writer.io_state());
+  String log_dir = subdir(subdir(kMonitoringBasePath, "full"), kLogSubPath);
+  String log_path = filepath(log_dir, 0);
+  String vault_path;
+  collection.getVaultFilePath(VaultFileRef::Lookup(0, kResolution_1_ms),
+                              &vault_path);
+  String cursor_path = vault_path + ".cursor";
+  roo_io::fakefs::StatResult log = fake_fs.stat(log_path.c_str());
+  roo_io::fakefs::StatResult vault = fake_fs.stat(vault_path.c_str());
+  roo_io::fakefs::StatResult cursor = fake_fs.stat(cursor_path.c_str());
+  ASSERT_EQ(roo_io::kOk, log.status);
+  ASSERT_EQ(roo_io::kOk, vault.status);
+  ASSERT_EQ(roo_io::kOk, cursor.status);
+  fake_fs.setCapacity(log.size + vault.size + cursor.size);
+
+  writer.flushSome();
+  EXPECT_EQ(Writer::IOSTATE_ERROR, writer.io_state());
+  EXPECT_EQ(-1, collection.compactedUntil());
+  String parent_path;
+  collection.getVaultFilePath(VaultFileRef::Lookup(0, kResolution_4_ms),
+                              &parent_path);
+  String parent_cursor = parent_path + ".cursor";
+  EXPECT_EQ(roo_io::kNotFound, fake_fs.stat(parent_cursor.c_str()).status);
+}
+
+// Verifies an incomplete record in a historical log cannot be mistaken for
+// normal EOF and cause the source file to be deleted.
+TEST(VaultCompactionTest, RetainsTruncatedHistoricalLog) {
+  roo_io::fakefs::FakeFs fake_fs;
+  roo_io::fakefs::FakeReferenceFs fs(fake_fs);
+  Collection collection(fs, "truncated", kResolution_1_ms);
+  Writer writer(&collection);
+  {
+    WriteTransaction tx(&writer);
+    tx.write(0, 1, 20.0f);
+    tx.write(256, 1, 20.0f);
+  }
+  String log_dir =
+      subdir(subdir(kMonitoringBasePath, "truncated"), kLogSubPath);
+  String path = filepath(log_dir, 0);
+  roo_io::fakefs::FileStream log =
+      fake_fs.open(path.c_str(), roo_io::fakefs::FakeFs::kWrite |
+                                     roo_io::fakefs::FakeFs::kTruncate);
+  ASSERT_TRUE(log.isOpen());
+  // Timestamp and stream ID followed by only one byte of the value.
+  using roo_io::byte;
+  const byte contents[] = {byte{1}, byte{0}, byte{2}, byte{1}, byte{0}};
+  ASSERT_EQ(sizeof(contents), log.write(contents, sizeof(contents)));
+  log.close();
+
+  writer.flushSome();
+  EXPECT_EQ(Writer::IOSTATE_ERROR, writer.io_state());
+  EXPECT_EQ(-1, collection.compactedUntil());
+  EXPECT_EQ(roo_io::kOk, fake_fs.stat(path.c_str()).status);
+}
+
+// Verifies a truncated child bucket prevents publication of the hierarchy.
+TEST(VaultCompactionTest, RejectsTruncatedChildBucket) {
+  roo_io::fakefs::FakeFs fake_fs;
+  roo_io::fakefs::FakeReferenceFs fs(fake_fs);
+  Collection collection(fs, "truncated", kResolution_1_ms);
+  Writer writer(&collection);
+  {
+    WriteTransaction tx(&writer);
+    tx.write(0, 1, 20.0f);
+    tx.write(3, 1, 20.0f);
+    tx.write(4, 1, 20.0f);
+  }
+  writer.flushSome();
+  ASSERT_TRUE(writer.isFlushInProgress());
+  ASSERT_EQ(Writer::IOSTATE_OK, writer.io_state());
+  String path;
+  collection.getVaultFilePath(VaultFileRef::Lookup(0, kResolution_1_ms), &path);
+  roo_io::fakefs::FileStream child =
+      fake_fs.open(path.c_str(), roo_io::fakefs::FakeFs::kWrite |
+                                     roo_io::fakefs::FakeFs::kTruncate);
+  ASSERT_TRUE(child.isOpen());
+  // A valid vault header followed by an incomplete sample count.
+  using roo_io::byte;
+  const byte contents[] = {byte{1}, byte{1}, byte{0x80}};
+  ASSERT_EQ(sizeof(contents), child.write(contents, sizeof(contents)));
+  child.close();
+
+  writer.flushSome();
+  EXPECT_EQ(Writer::IOSTATE_ERROR, writer.io_state());
+  EXPECT_EQ(-1, collection.compactedUntil());
+}
+
 // Verifies a restart before parent compaction or after saving the 4 ms
 // cursor replays the base range and completes the remaining hierarchy.
 TEST(VaultCompactionTest, ResumesHistoricalRangeAfterRestart) {

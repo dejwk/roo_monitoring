@@ -137,12 +137,13 @@ class VaultFileReader {
   /// If open fails for any reason other than not found, or if read fails,
   /// this returns false.
   bool ok() const {
-    return reader_.status() == roo_io::kOk ||
-           reader_.status() == roo_io::kNotFound;
+    return status() == roo_io::kOk || status() == roo_io::kNotFound;
   }
 
-  /// Returns the current reader status.
-  roo_io::Status status() const { return reader_.status(); }
+  /// Returns the reader status, preserving an input error until the next open.
+  roo_io::Status status() const {
+    return read_error_ == roo_io::kOk ? reader_.status() : read_error_;
+  }
 
   /// Returns the vault file reference for this reader.
   const VaultFileRef& vault_ref() const { return ref_; }
@@ -160,6 +161,7 @@ class VaultFileReader {
   roo_io::MultipassInputStreamReader reader_;
   int index_;
   int position_;
+  roo_io::Status read_error_ = roo_io::kOk;
   // A short file was deliberately closed after reaching its physical EOF.
   bool exhausted_;
 };

@@ -127,7 +127,8 @@ bool writeCursor(roo_io::Mount& fs, const char* cursor_path,
   auto writer = OpenDataFileForWrite(fs, cursor_path, roo_io::kFailIfExists);
   if (!writer.ok()) {
     LOG(ERROR) << "Error opening the cursor file " << cursor_path
-               << "for write: " << roo_io::StatusAsString(writer.status());
+               << " for write: " << roo_io::StatusAsString(writer.status());
+    return false;
   }
   MLOG(roo_monitoring_compaction)
       << "Writing cursor content " << cursor_path << ": " << roo_logging::hex
@@ -142,7 +143,8 @@ bool writeCursor(roo_io::Mount& fs, const char* cursor_path,
   writer.close();
   if (writer.status() != roo_io::kClosed) {
     LOG(ERROR) << "Error writing to the cursor file " << cursor_path << ": "
-               << strerror(errno);
+               << roo_io::StatusAsString(writer.status());
+    fs.remove(cursor_path);
     return false;
   }
   return true;
@@ -292,31 +294,24 @@ int16_t Writer::writeToVault(roo_io::Mount& fs, LogReader& reader,
   // See if we can use cursor.
   String cursor_path = getLogCompactionCursorPath(collection_, ref);
   LogCompactionCursor cursor;
-  roo_io::Status status;
   bool opened = false;
-  status = tryReadLogCompactionCursor(fs, cursor_path.c_str(), &cursor);
-  if (status == roo_io::kOk) {
-    if (reader.seek(cursor.log_cursor())) {
-      writer.openExisting(cursor.target_datum_index());
-      if (writer.ok()) {
-        opened = true;
-      }
-      if (fs.remove(cursor_path.c_str()) != roo_io::kOk) {
-        io_state_ = IOSTATE_ERROR;
-        return -1;
-      }
-    }
-  }
-  if (status != roo_io::kNotFound) {
-    fs.remove(cursor_path.c_str());
-  }
-  if (!opened) {
-    // Cursor not found.
-    writer.openNew();
-    if (!writer.ok()) {
+  roo_io::Status status =
+      tryReadLogCompactionCursor(fs, cursor_path.c_str(), &cursor);
+  if (status == roo_io::kOk && reader.seek(cursor.log_cursor())) {
+    if (writer.openExisting(cursor.target_datum_index()) != roo_io::kOk) {
       io_state_ = IOSTATE_ERROR;
       return -1;
     }
+    opened = true;
+  }
+  if (status != roo_io::kNotFound &&
+      fs.remove(cursor_path.c_str()) != roo_io::kOk) {
+    io_state_ = IOSTATE_ERROR;
+    return -1;
+  }
+  if (!opened && writer.openNew() != roo_io::kOk) {
+    io_state_ = IOSTATE_ERROR;
+    return -1;
   }
 
   // In any case, now just iterate and compact.
@@ -339,7 +334,23 @@ int16_t Writer::writeToVault(roo_io::Mount& fs, LogReader& reader,
     writer.writeLogData(data);
     current += increment;
   }
-  if (!writer.ok()) {
+  if (reader.status() != roo_io::kOk) {
+    LOG(ERROR) << "Failed to read the compaction log: "
+               << roo_io::StatusAsString(reader.status());
+    io_state_ = IOSTATE_ERROR;
+    return -1;
+  }
+
+  if (!reader.isHotRange()) {
+    while (writer.write_index() < kRangeElementCount) {
+      writer.writeEmptyData();
+      current += increment;
+    }
+  }
+  writer.close();
+  if (writer.status() != roo_io::kClosed) {
+    LOG(ERROR) << "Failed to write the base vault: "
+               << roo_io::StatusAsString(writer.status());
     io_state_ = IOSTATE_ERROR;
     return -1;
   }
@@ -351,22 +362,10 @@ int16_t Writer::writeToVault(roo_io::Mount& fs, LogReader& reader,
       io_state_ = IOSTATE_ERROR;
       return -1;
     }
-  } else {
-    while (writer.write_index() < kRangeElementCount) {
-      writer.writeEmptyData();
-      current += increment;
-    }
-  }
-  // compaction_range.index_begin = compaction_index_begin;
-  int16_t compaction_index_end = writer.write_index();
-  writer.close();
-  if (writer.status() != roo_io::kClosed) {
-    io_state_ = IOSTATE_ERROR;
-    return -1;
   }
   // Do not publish base-vault progress until all parent levels have finished.
   pending_compacted_until_ = current;
-  return compaction_index_end;
+  return writer.write_index();
 }
 
 Writer::Status Writer::compactVaultOneLevel() {
@@ -408,10 +407,10 @@ Writer::Status Writer::compactVaultOneLevel() {
                 (cursor.target_datum_index() % (kRangeElementCount / 4)) << 2,
                 cursor.log_cursor().position());
     if (reader.ok()) {
-      writer.openExisting(cursor.target_datum_index());
-      if (writer.ok()) {
-        opened = true;
+      if (writer.openExisting(cursor.target_datum_index()) != roo_io::kOk) {
+        return Writer::FAILED;
       }
+      opened = true;
     }
   }
   if (opened && writer.write_index() >= compaction_head_index_end_) {
@@ -425,7 +424,9 @@ Writer::Status Writer::compactVaultOneLevel() {
   }
   if (!opened) {
     reader.open(compaction_head_.child(0), 0, 0);
-    writer.openNew();
+    if (!reader.ok() || writer.openNew() != roo_io::kOk) {
+      return Writer::FAILED;
+    }
   }
 
   // Now iterate and compact.
@@ -435,7 +436,10 @@ Writer::Status Writer::compactVaultOneLevel() {
     CHECK_LE(reader.index(), kRangeElementCount - 4);
     for (int i = 0; i < 4; ++i) {
       // Ignore missing input files when compacting.
-      reader.next(&sample_group);
+      if (!reader.next(&sample_group) && !reader.ok() &&
+          reader.status() != roo_io::kClosed) {
+        return Writer::FAILED;
+      }
       for (const Sample& sample : sample_group) {
         if (sample.fill() > 0) {
           aggregator.add(sample);
@@ -446,8 +450,9 @@ Writer::Status Writer::compactVaultOneLevel() {
     aggregator.clear();
     if (reader.past_eof()) {
       reader.open(reader.vault_ref().next(), 0, 0);
+      if (!reader.ok()) return Writer::FAILED;
     }
-  } while (writer.write_index() < compaction_head_index_end_);
+  } while (writer.ok() && writer.write_index() < compaction_head_index_end_);
   writer.close();
   if (writer.status() != roo_io::kClosed) {
     LOG(ERROR) << "Failed to process the output vault file: "
@@ -461,12 +466,6 @@ Writer::Status Writer::compactVaultOneLevel() {
             LogCompactionCursor(reader.tell(), writer.write_index()))) {
       return Writer::FAILED;
     }
-  }
-  reader.close();
-  if (reader.status() != roo_io::kClosed) {
-    LOG(ERROR) << "Failed to process the input vault file: "
-               << roo_io::StatusAsString(reader.status());
-    return Writer::FAILED;
   }
   MLOG(roo_monitoring_compaction)
       << "Finished compacting " << roo_logging::hex << writer.vault_ref()

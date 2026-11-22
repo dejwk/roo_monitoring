@@ -91,11 +91,20 @@ class LogFileReader {
   /// Reads the next entry from the file.
   bool next(int64_t* timestamp, std::vector<LogSample>* data, bool is_hot);
 
+  /// Reports the last open or read result, including normal end of input.
+  roo_io::Status status() const { return status_; }
+
  private:
+  // Reads one complete bucket and distinguishes a partial hot bucket from an
+  // invalid record in a historical file.
+  roo_io::Status readNext(int64_t* timestamp, std::vector<LogSample>* data,
+                          bool is_hot);
+
   roo_io::Mount& fs_;
   roo_io::MultipassInputStreamReader reader_;
-  uint8_t lookahead_entry_type_;
-  int64_t checkpoint_;
+  uint8_t lookahead_entry_type_ = 0;
+  int64_t checkpoint_ = 0;
+  roo_io::Status status_ = roo_io::kClosed;
 };
 
 /// Cursor used when seeking through multiple log files.
@@ -141,6 +150,9 @@ class LogReader {
   /// Reads the next sample in the current range.
   bool nextSample(int64_t* timestamp, std::vector<LogSample>* data);
 
+  /// Reports an error encountered while reading the current range.
+  roo_io::Status status() const { return status_; }
+
  private:
   bool open(int64_t file, uint64_t position);
 
@@ -157,6 +169,7 @@ class LogReader {
   int64_t range_floor_;
   int64_t range_ceil_;
   LogFileReader reader_;
+  roo_io::Status status_ = roo_io::kOk;
 };
 
 /// Writer for log files at a fixed resolution.

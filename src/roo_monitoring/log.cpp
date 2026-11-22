@@ -21,41 +21,68 @@ namespace roo_monitoring {
 
 enum Code { CODE_ERROR = 0, CODE_TIMESTAMP = 1, CODE_DATUM = 2 };
 
+namespace {
+
+// An unfinished record is expected only at the end of the hot log.
+roo_io::Status IncompleteLogRecordStatus(
+    const roo_io::MultipassInputStreamReader& reader, bool is_hot) {
+  if (reader.hasDataError() ||
+      (!is_hot && reader.status() == roo_io::kEndOfStream)) {
+    return roo_io::kReadError;
+  }
+  return reader.status();
+}
+
+}  // namespace
+
 bool LogFileReader::open(const char* path, int64_t checkpoint) {
   MLOG(roo_monitoring_compaction)
       << "Opening log file " << path << " at " << checkpoint;
   reader_.reset(fs_.fopen(path));
   if (!reader_.isOpen()) {
+    status_ = reader_.status();
     LOG(ERROR) << "Failed to open log file " << path << ": "
-               << roo_io::StatusAsString(reader_.status());
+               << roo_io::StatusAsString(status_);
     return false;
   }
   if (checkpoint > 0) {
     reader_.seek(checkpoint);
     if (!reader_.ok()) {
+      status_ = reader_.status();
       LOG(ERROR) << "Failed to seek in the log file " << path << ": "
-                 << roo_io::StatusAsString(reader_.status());
+                 << roo_io::StatusAsString(status_);
       return false;
     }
   }
   checkpoint_ = checkpoint;
   lookahead_entry_type_ = reader_.readU8();
-  return true;
+  status_ = reader_.status();
+  return status_ == roo_io::kOk || status_ == roo_io::kEndOfStream;
 }
 
 bool LogFileReader::next(int64_t* timestamp, std::vector<LogSample>* data,
                          bool is_hot) {
   data->clear();
-  if (checkpoint_ < 0) return false;
-  if (!reader_.ok()) return false;
+  if (status_ != roo_io::kOk) return false;
+  status_ = readNext(timestamp, data, is_hot);
+  if (status_ == roo_io::kOk) return true;
+  data->clear();
+  return false;
+}
+
+roo_io::Status LogFileReader::readNext(int64_t* timestamp,
+                                       std::vector<LogSample>* data,
+                                       bool is_hot) {
+  if (checkpoint_ < 0) return roo_io::kEndOfStream;
   if (lookahead_entry_type_ != CODE_TIMESTAMP) {
     LOG(ERROR) << "Unexpected content in the log file: "
                << (int)lookahead_entry_type_;
-    return false;
+    return roo_io::kReadError;
   }
   *timestamp = reader_.readVarU64();
+  if (!reader_.ok()) return IncompleteLogRecordStatus(reader_, is_hot);
   lookahead_entry_type_ = reader_.readU8();
-  if (!reader_.ok()) return false;
+  if (!reader_.ok()) return IncompleteLogRecordStatus(reader_, is_hot);
 
   // LOG(INFO) << "Read log data at timestamp: " << roo_logging::hex <<
   // *timestamp;
@@ -64,7 +91,7 @@ bool LogFileReader::next(int64_t* timestamp, std::vector<LogSample>* data,
       if (is_hot) {
         // Indicate that the data isn't complete yet. Not updating the
         // source checkpoint in this case.
-        return false;
+        return roo_io::kEndOfStream;
       } else {
         // Indicating that we have reached the end of a 'historical' log file.
         MLOG(roo_monitoring_compaction)
@@ -76,13 +103,13 @@ bool LogFileReader::next(int64_t* timestamp, std::vector<LogSample>* data,
       // Must be I/O error.
       LOG(ERROR) << "Failed to read timestamped data from a log file: "
                  << roo_io::StatusAsString(reader_.status());
-      return false;
+      return reader_.status();
     } else if (lookahead_entry_type_ == CODE_DATUM) {
       uint64_t stream_id;
       uint16_t datum;
       stream_id = reader_.readVarU64();
       datum = reader_.readBeU16();
-      if (!reader_.ok()) return false;
+      if (!reader_.ok()) return IncompleteLogRecordStatus(reader_, is_hot);
       data->emplace_back(stream_id, datum);
       lookahead_entry_type_ = reader_.readU8();
       continue;
@@ -91,11 +118,11 @@ bool LogFileReader::next(int64_t* timestamp, std::vector<LogSample>* data,
       break;
     } else {
       LOG(ERROR) << "Unexpected entry type " << (int)lookahead_entry_type_;
-      return false;
+      return roo_io::kReadError;
     }
   }
   std::sort(data->begin(), data->end());
-  return true;
+  return roo_io::kOk;
 }
 
 std::vector<int64_t> CachedLogDir::list() {
@@ -163,6 +190,7 @@ bool LogReader::nextRange() {
     return false;
   }
   cursor_ = group_begin_ = group_end_;
+  status_ = roo_io::kOk;
   Resolution range_resolution = Resolution(resolution_ + kRangeLength);
   range_floor_ = timestamp_ms_floor(*cursor_, range_resolution);
   range_ceil_ = timestamp_ms_ceil(*cursor_, range_resolution);
@@ -186,16 +214,20 @@ bool LogReader::open(int64_t file, uint64_t position) {
 }
 
 bool LogReader::nextSample(int64_t* timestamp, std::vector<LogSample>* data) {
+  if (status_ != roo_io::kOk) return false;
   for (; cursor_ != group_end_; ++cursor_) {
-    if (!reader_.is_open()) {
-      if (!open(*cursor_, 0)) {
-        LOG(ERROR) << "Failed to open log file " << *cursor_;
-        continue;
-      }
+    if (!reader_.is_open() && !open(*cursor_, 0)) {
+      status_ = reader_.status();
+      reader_.close();
+      return false;
     }
-    CHECK(reader_.is_open());
     if (reader_.next(timestamp, data, *cursor_ == hot_file_)) return true;
+    roo_io::Status read_status = reader_.status();
     reader_.close();
+    if (read_status != roo_io::kEndOfStream) {
+      status_ = read_status;
+      return false;
+    }
   }
   return false;
 }
@@ -207,10 +239,10 @@ bool LogReader::seek(LogCursor cursor) {
                  << cursor.file();
     return false;
   }
-  if (!reader_.open(filepath(log_dir_, cursor.file()).c_str(),
-                    cursor.position())) {
+  if (!open(cursor.file(), cursor.position())) {
     LOG(WARNING) << "Seek failed; could not open: " << roo_logging::hex
                  << cursor.file();
+    reader_.close();
     return false;
   }
   cursor_ = i;
