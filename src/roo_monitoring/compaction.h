@@ -4,6 +4,7 @@
 #include <memory>
 
 #include "log.h"
+#include "roo_io.h"
 #include "roo_io/data/output_stream_writer.h"
 #include "roo_monitoring.h"
 #include "stdint.h"

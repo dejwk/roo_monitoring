@@ -8,6 +8,7 @@
 
 #include <set>
 
+#include "roo_io.h"
 #include "roo_io/fs/filesystem.h"
 #include "roo_monitoring/common.h"
 #include "roo_monitoring/log.h"

@@ -5,6 +5,7 @@
 
 #include <vector>
 
+#include "roo_io.h"
 #include "roo_io/fs/filesystem.h"
 
 namespace roo_monitoring {

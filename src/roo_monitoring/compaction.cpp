@@ -1,6 +1,7 @@
 #include "compaction.h"
 
 #include "common.h"
+#include "roo_io.h"
 #include "roo_io/data/output_stream_writer.h"
 #include "roo_io/fs/fsutil.h"
 #include "roo_logging.h"

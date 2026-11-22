@@ -3,7 +3,9 @@
 #include <vector>
 
 #include "resolution.h"
+#include "roo_collections.h"
 #include "roo_collections/flat_small_hash_set.h"
+#include "roo_io.h"
 #include "roo_io/data/multipass_input_stream_reader.h"
 #include "roo_io/data/output_stream_writer.h"
 #include "roo_io/fs/filesystem.h"

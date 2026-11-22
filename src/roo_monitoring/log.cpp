@@ -5,6 +5,7 @@
 #include <algorithm>
 
 #include "common.h"
+#include "roo_io.h"
 #include "roo_io/fs/fsutil.h"
 #include "roo_logging.h"
 

@@ -5,6 +5,7 @@
 #include "common.h"
 #include "compaction.h"
 #include "log.h"
+#include "roo_io.h"
 #include "roo_io/data/input_stream_reader.h"
 #include "roo_io/data/output_stream_writer.h"
 #include "roo_io/fs/fsutil.h"
