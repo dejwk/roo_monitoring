@@ -1,3 +1,14 @@
+# roo_monitoring 1.2.0
+
+- Added `Collection::compactedUntil()`, which returns the exclusive data timestamp through which compaction has succeeded at every resolution, or `-1` before the first successful compaction.
+- Historical vault compaction and log cleanup now resume after a restart. Source logs are kept until compaction finishes at every resolution.
+- Compaction now stops on log or vault I/O errors, including full disks and truncated records, and preserves source logs for retry with a new writer. Fixed checkpointing when a short vault ends cleanly between records.
+- Fixed Arduino dependency discovery for `roo_io` and `roo_collections`.
+- Updated `roo_collections` to 2.0.2, `roo_io` to 2.5.0, and `roo_logging` to 1.6.1, with matching PlatformIO minimum versions.
+- Updated Bazel and CI to `roo_testing` 2.7.0. Added ESP32-S3, ESP32-C3, and RP2040 host-emulation profile definitions and expanded the test helper to select nine profiles. Running the full matrix locally requires additional `.bazelrc` imports.
+
+---
+
 # roo_monitoring 1.1.5
 
 - Fixed vault reads to reject truncated or malformed sample counts instead of treating them as empty entries; added regression tests.
